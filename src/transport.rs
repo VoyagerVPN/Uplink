@@ -33,6 +33,8 @@ pub struct InviteMethods {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Membership {
     pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_revision: Option<String>,
     #[serde(default)]
     pub methods: Option<InviteMethods>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +102,10 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
         {
             Err(io::Error::other("Network name already in use"))
         }
+        413 if endpoint == "avatar" => Err(io::Error::other(
+            "The server upload limit is too low for this avatar.",
+        )),
+        400 if endpoint == "avatar" => Err(io::Error::other("Invalid network avatar")),
         429 => Err(io::Error::other("Too many login attempts")),
         403 if endpoint == "login" => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -123,11 +129,15 @@ fn send_https(
     endpoint: &str,
     body: &[u8],
 ) -> Result<(u32, Vec<u8>, u32), curl::Error> {
-    const MAX_RESPONSE: usize = 262_144;
+    let max_response = if endpoint == "sync" {
+        1_700_000
+    } else {
+        262_144
+    };
     client.url(&format!("https://{host}/v1/{endpoint}"))?;
     client.connect_timeout(Duration::from_secs(4))?;
     client.timeout(Duration::from_secs(8))?;
-    client.max_filesize(MAX_RESPONSE as u64)?;
+    client.max_filesize(max_response as u64)?;
     client.follow_location(false)?;
     #[cfg(test)]
     https_tests::configure_tls(client)?;
@@ -140,7 +150,7 @@ fn send_https(
     {
         let mut transfer = client.transfer();
         transfer.write_function(|chunk| {
-            if chunk.len() > MAX_RESPONSE - response.len() {
+            if chunk.len() > max_response - response.len() {
                 return Ok(0);
             }
             response.extend_from_slice(chunk);
@@ -252,6 +262,7 @@ pub fn bootstrap(host: &str, token: &str, allow_setup_prompt: bool) -> io::Resul
     }
     Ok(Membership {
         host: host.into(),
+        avatar_revision: None,
         methods: None,
         id: hex(
             &info["id"],
@@ -430,6 +441,7 @@ impl Membership {
         &mut self,
         token: &str,
         nick: &str,
+        prefs: &std::path::Path,
         returning: bool,
         prior: Option<&str>,
     ) -> io::Result<()> {
@@ -468,13 +480,17 @@ impl Membership {
         let net = wait_for_virtual_ip(start + Duration::from_secs(35), || {
             interface(self.interface_id())
         })?;
-        self.refresh_using(nick, |_| Ok(Some(net)))
+        self.refresh_using(nick, prefs, |_| Ok(Some(net)))
     }
 
     pub fn manage(&self, action: &str, value: &str) -> io::Result<()> {
         post(
             &self.host,
-            "manage",
+            if action == "avatar" {
+                "avatar"
+            } else {
+                "manage"
+            },
             json!({"session":self.session,"action":action,"value":value}),
         )
         .map(|_| ())
@@ -488,20 +504,19 @@ impl Membership {
         ))
     }
 
-    pub fn refresh(&mut self, nick: &str) -> io::Result<()> {
-        self.refresh_using(nick, interface)
+    pub fn refresh(&mut self, nick: &str, prefs: &std::path::Path) -> io::Result<()> {
+        self.refresh_using(nick, prefs, interface)
     }
 
     fn refresh_using(
         &mut self,
         nick: &str,
+        prefs: &std::path::Path,
         read_interface: impl FnOnce(&str) -> io::Result<Option<Value>>,
     ) -> io::Result<()> {
-        let mut snapshot = post(
-            &self.host,
-            "sync",
-            json!({"session":self.session,"nick":nick}),
-        );
+        let sync =
+            json!({"session":self.session,"nick":nick,"avatar_revision":self.known_avatar(prefs)});
+        let mut snapshot = post(&self.host, "sync", sync.clone());
         if snapshot.as_ref().is_ok_and(|v| v["needs_proof"] == true) {
             self.rows.clear();
             self.methods = None;
@@ -513,13 +528,16 @@ impl Membership {
                     "attest",
                     json!({"session":self.session,"proof":proof}),
                 )?;
-                post(
-                    &self.host,
-                    "sync",
-                    json!({"session":self.session,"nick":nick}),
-                )
+                post(&self.host, "sync", sync)
             })();
         }
+        let avatar_status = match &snapshot {
+            Ok(data) if data["id"] == self.id => self.apply_avatar(prefs, data),
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                self.apply_avatar(prefs, &Value::Null)
+            }
+            _ => Ok(()),
+        };
         let ms = if snapshot.is_ok() {
             request(&self.host, "ping", json!({}))
                 .ok()
@@ -544,7 +562,7 @@ impl Membership {
                 member.present = false;
             }
         }
-        status.and(net.map(|_| ()))
+        status.and(net.map(|_| ())).and(avatar_status)
     }
 
     fn update_status(
@@ -668,6 +686,41 @@ mod tests {
         );
         let failed = wait_for_virtual_ip(now, || Err(io::ErrorKind::BrokenPipe.into()));
         assert_eq!(failed.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn avatar_sync_handles_replacement_missing_cache_and_older_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = dir.path().join("prefs.json");
+        let mut m: Membership = serde_json::from_value(json!({
+            "host":"example.org","id":"1234","session":"s","node":"me","name":"A"
+        }))
+        .unwrap();
+        let photo = crate::network_avatar::encode(&vec![77; 512 * 512 * 4]).unwrap();
+        let bytes = STANDARD.decode(&photo).unwrap();
+        use sha2::{Digest, Sha256};
+        let revision = format!("{:x}", Sha256::digest(&bytes));
+        m.apply_avatar(&prefs, &json!({"avatar_revision":revision, "avatar":photo}))
+            .unwrap();
+        let file = m.avatar_file(&prefs).unwrap();
+        assert_eq!(
+            image::open(&file).unwrap().into_rgba8().get_pixel(10, 10).0,
+            [77; 4]
+        );
+        assert_eq!(m.known_avatar(&prefs), revision);
+        m.apply_avatar(&prefs, &json!({"avatar_revision":revision}))
+            .unwrap();
+        std::fs::remove_file(file).unwrap();
+        assert_eq!(m.known_avatar(&prefs), "");
+        assert!(
+            m.apply_avatar(
+                &prefs,
+                &json!({"avatar_revision":revision,"avatar":"invalid"})
+            )
+            .is_err()
+        );
+        m.apply_avatar(&prefs, &json!({})).unwrap();
+        assert!(m.avatar_revision.is_none());
     }
 
     #[test]

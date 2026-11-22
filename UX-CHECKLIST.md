@@ -7,6 +7,7 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 - **0.1.0** is the published Windows installer for joining existing instances.
 - **0.1.1** covers the current client, transport and server fixes, including HTTPS connection reuse during background sync.
 - **0.1.2** gives release notes a compact scrollbar with a dedicated gutter.
+- **0.1.3** shares network avatars and translates connection and settings errors.
 - **0.2.0** covers VPS setup from the Windows UI, from entering SSH credentials through creating the first network and receiving its invitation.
 
 ## Port of the approved HTML prototype to Rust
@@ -16,6 +17,8 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 - [x] Invite links open all five HTML demo networks. Select a saved network in the rail to switch views.
 - [x] The network gear opens Overview, Invitations and Members. Each test network stores its own changes.
 - [x] Choose an avatar with the Windows file picker or drop an image. The editor shows a rounded preview and supports panning, zooming and replacing the source. It saves a 512 × 512 square.
+- [x] Share a network avatar with verified members. Owners and admins can replace it. A regular sync transfers the image only when the local copy is missing or outdated. Older instances show a server update hint before photo selection.
+- [ ] Verify the avatar change in two installed Windows clients against an upgraded VPS.
 - [x] The invite dialog shows enabled methods. QR codes and links can be enabled independently. Password sign-in also asks for the server address and network name.
 - [x] Owners and admins manage the name, avatar and invitations. Owners change roles and transfer ownership. Admins can remove regular members. Removal and transfer require confirmation.
 

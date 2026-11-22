@@ -1,5 +1,7 @@
 """Одноразовые приглашения и сессии отдельных участников."""
+import base64
 import hashlib
+import zlib
 import re
 import secrets
 import sqlite3
@@ -62,6 +64,8 @@ class Invitations:
                 network TEXT PRIMARY KEY, link INTEGER NOT NULL DEFAULT 1, qr INTEGER NOT NULL DEFAULT 0)""")
             db.execute("""CREATE TABLE IF NOT EXISTS network_passwords (
                 network TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE, salt BLOB NOT NULL, verifier BLOB NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS network_avatars (
+                network TEXT PRIMARY KEY, revision TEXT NOT NULL, pixels BLOB NOT NULL)""")
             groups.schema(db)
             yield db
 
@@ -226,7 +230,20 @@ class Invitations:
             actor = self.manager(db, session)
             network = actor["network"]
             endpoint = "/controller/network/" + network
-            if action == "name":
+            if action == "avatar":
+                if not isinstance(value, str) or len(value) > 1_410_000:
+                    raise ApiError(400, "Invalid network avatar")
+                try:
+                    packed = base64.b64decode(value, validate=True)
+                    decoder = zlib.decompressobj()
+                    pixels = decoder.decompress(packed, 512 * 512 * 4 + 1)
+                    if len(pixels) != 512 * 512 * 4 or not decoder.eof or decoder.unused_data:
+                        raise ValueError()
+                except (ValueError, zlib.error):
+                    raise ApiError(400, "Invalid network avatar")
+                db.execute("INSERT OR REPLACE INTO network_avatars VALUES(?,?,?)",
+                           (network, hashlib.sha256(packed).hexdigest(), packed))
+            elif action == "name":
                 name = network_name(value)
                 groups.require_available_name(db,self.transport,network,name)
                 self.directory(db, endpoint, {"name": name})
@@ -313,7 +330,7 @@ class Invitations:
             db.execute("UPDATE invitations SET device_verified=1 WHERE session=?", (key,))
         return {}
 
-    def sync(self, session, nick):
+    def sync(self, session, nick, avatar_revision=None):
         key, nick = digest(session), nickname(nick)
         with self.transaction() as db:
             own = db.execute("SELECT * FROM invitations WHERE session=? AND redeemed=1", (key,)).fetchone()
@@ -339,4 +356,11 @@ class Invitations:
                     rows.append({"node": node, "role": roles.get(node, "member"), "ip": next(iter(member["ipAssignments"]), ""),
                                  "nick": profile["nick"] if profile else node,
                                  "present": bool(profile and profile["seen"] > self.now() - 45)})
-            return {"id": own["network"], "name": info["name"], "members": rows, "methods": self.methods(db,own["network"])}
+            result = {"id": own["network"], "name": info["name"], "members": rows, "methods": self.methods(db,own["network"])}
+            if isinstance(avatar_revision, str):
+                row = db.execute("SELECT revision FROM network_avatars WHERE network=?", (own["network"],)).fetchone()
+                result["avatar_revision"] = row["revision"] if row else ""
+                if row and row["revision"] != avatar_revision:
+                    packed, = db.execute("SELECT pixels FROM network_avatars WHERE network=?", (own["network"],)).fetchone()
+                    result["avatar"] = base64.b64encode(packed).decode("ascii")
+            return result

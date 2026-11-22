@@ -21,6 +21,7 @@ export global NetworkUi {
     in-out property <string> method;
     in-out property <image> qr-image;
     in-out property <image> avatar;
+    in-out property <bool> avatar-editable;
     in-out property <bool> has-avatar;
     in-out property <bool> dragging-file;
     in-out property <DropZone> drop-bounds;
@@ -135,7 +136,7 @@ export component NetworkPage inherits VerticalLayout {
             property <DropZone> bounds: {x:self.absolute-position.x/1px,y:self.absolute-position.y/1px,w:self.width/1px,h:self.height/1px};
             init=>{NetworkUi.drop-bounds=self.bounds;}
             changed bounds=>{NetworkUi.drop-bounds=self.bounds;}
-            x:16px;y:16px;width:64px;height:84px;accessible-role:button;accessible-label:@tr("Change avatar");
+            x:16px;y:16px;width:64px;height:84px;enabled:NetworkUi.avatar-editable;accessible-role:button;accessible-label:@tr("Change avatar");
             accessible-action-default=>{NetworkUi.action("pick","");}
             key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {NetworkUi.action("pick","");return accept;}return reject;}
             Rectangle {y:0px;height:64px;border-radius:14px;clip:true;background:#2d3526;
@@ -144,12 +145,13 @@ export component NetworkPage inherits VerticalLayout {
                 if NetworkUi.dragging-file: Rectangle{background:#10121480;border-radius:14px;Label{text:"+";color:#bfec70;font-size:28px;horizontal-alignment:center;}}
             }
             if NetworkUi.dragging-file: Image{x:-4px;y:-4px;width:72px;height:72px;source:@image-url("../assets/icon/drop-outline.svg");}
-            Label{y:68px;height:16px;width:parent.width;text:@tr("Change");font-size:12px;color:hit.has-hover || avatar-button.show-focus?#eff0f2:#a7abb2;horizontal-alignment:center;}
-            hit:=TouchArea{mouse-cursor:pointer;clicked=>{avatar-button.focus-from-pointer();NetworkUi.action("pick","");}}
+            if NetworkUi.avatar-editable: Label{y:68px;height:16px;width:parent.width;text:@tr("Change");font-size:12px;color:hit.has-hover || avatar-button.show-focus?#eff0f2:#a7abb2;horizontal-alignment:center;}
+            hit:=TouchArea{enabled:NetworkUi.avatar-editable;mouse-cursor:self.enabled?pointer:default;clicked=>{avatar-button.focus-from-pointer();NetworkUi.action("pick","");}}
         }
         VerticalLayout {x:94px;width:parent.width - 110px;alignment:center;
             EditableTitle{value:NetworkUi.name;type-size:18px;show-pencil:true;field-name:@tr("Network name");action-label:@tr("Rename network");editing<=>root.editing;save(s)=>{NetworkUi.action("name",s);}}
             Label {height:16px;text:NetworkUi.server;color:#a7abb2;font-size:12px;}
+            if !NetworkUi.avatar-editable: Label {text:@tr("Update the server to change the network avatar.");wrap:word-wrap;color:#a7abb2;font-size:12px;}
         }
     }
     if NetworkUi.panel=="methods": Rectangle {

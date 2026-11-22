@@ -5,6 +5,7 @@ fn build_language_catalog() {
     println!("cargo:rerun-if-changed=lang");
     let mut languages = vec![("en".to_owned(), "English".to_owned())];
     let mut entries = String::new();
+    let mut sources = std::collections::BTreeSet::new();
     for dir in fs::read_dir("lang").unwrap() {
         let dir = dir.unwrap();
         if !dir.file_type().unwrap().is_dir() {
@@ -21,14 +22,16 @@ fn build_language_catalog() {
         for entry in po.entries {
             if entry.msgctxt.as_deref() == Some("native") && !entry.obsolete {
                 if let Some(value) = entry.msgstr.filter(|s| !s.is_empty()) {
+                    sources.insert(format!("{:?}", entry.msgid));
                     writeln!(entries, "({code:?}, {:?}) => {value:?},", entry.msgid).unwrap();
                 }
             }
         }
     }
     languages.sort_by_key(|(code, _)| (code != "ru", code.clone()));
+    let known = sources.into_iter().collect::<Vec<_>>().join(" | ");
     let source = format!(
-        "pub const LANGUAGES: &[(&str, &str)] = &{languages:?};\npub fn message<'a>(code: &str, source: &'a str) -> &'a str {{ match (code, source) {{ {entries} _ => source }} }}"
+        "fn known_source(source: &str) -> bool {{ matches!(source, {known}) }}\npub const LANGUAGES: &[(&str, &str)] = &{languages:?};\npub fn message<'a>(code: &str, source: &'a str) -> &'a str {{ match (code, source) {{ {entries} _ => source }} }}"
     );
     fs::write(
         PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("languages.rs"),

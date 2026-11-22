@@ -70,6 +70,12 @@ Install `instance.py`, `groups.py`, `invites.py`, `device_proof.py` and `client_
 
 Run server tests from the project root with `python -B -m unittest discover -s server`. Windows requires ZeroTier 1.16.2 configured with the instance's root. See the [checklist](../UX-CHECKLIST.md) for known limitations and outstanding tests. The Uplink sources exclude controller binaries and private keys. [ZeroTier controller distribution terms](https://github.com/zerotier/ZeroTierOne/blob/1.16.2/nonfree/LICENSE.md)
 
+## Network avatars
+
+Owners and admins upload the cropped 512 × 512 avatar through `POST /v1/avatar`. Allow request bodies up to 2 MiB on this route in the HTTPS proxy. The image contains zlib-compressed RGBA pixels, encoded as base64. The server checks membership, role and decoded size before storing it.
+
+Clients send their cached `avatar_revision` in the regular sync request. An empty string requests the current image. The reply includes the image only when its SHA-256 differs. Clients that omit the field keep their original sync response. If the server omits the revision, the client shows the server update hint in network settings.
+
 ## Join with a network name and password
 
 Enter the server's HTTPS host, network name and password. On the same instance, “Coop” and “ coop ” identify the same network. Separate instances can use the same name. Creating or renaming a network with a name already in use returns HTTP 409. Renaming preserves the ID, memberships and existing invitations. If a legacy installation already has duplicate names, the owner must choose a new name before enabling password sign-in.

@@ -673,3 +673,126 @@ msgstr "Не удалось проверить выпуск. Проверить 
 
 msgid "Installation failed. Check for updates"
 msgstr "Установка не удалась. Проверить обновления"
+
+msgid "Update the server to change the network avatar."
+msgstr "Чтобы изменить аватар сети, обновите сервер Uplink."
+
+msgctxt "native"
+msgid "Could not complete this action."
+msgstr "Не удалось выполнить действие."
+
+msgctxt "native"
+msgid "This setting is unavailable on this instance"
+msgstr "Сервер не поддерживает эту настройку."
+
+msgctxt "native"
+msgid "Invalid network avatar"
+msgstr "Не удалось прочитать аватар сети."
+
+msgctxt "native"
+msgid "Could not reach Uplink over HTTPS"
+msgstr "Не удалось подключиться к серверу Uplink по HTTPS."
+
+msgctxt "native"
+msgid "Waiting for network join"
+msgstr "Сервер ещё не подтвердил подключение к сети."
+
+msgctxt "native"
+msgid "Invitation or membership denied"
+msgstr "Сервер отклонил приглашение или доступ к сети."
+
+msgctxt "native"
+msgid "Uplink API unavailable"
+msgstr "Сервис Uplink на сервере недоступен."
+
+msgctxt "native"
+msgid "Invalid ZeroTier identifier"
+msgstr "Получен некорректный идентификатор ZeroTier."
+
+msgctxt "native"
+msgid "Missing local profile"
+msgstr "Не найден локальный профиль пользователя."
+
+msgctxt "native"
+msgid "Missing Windows path"
+msgstr "Не удалось определить системный путь Windows."
+
+msgctxt "native"
+msgid "Invalid ZeroTier root"
+msgstr "Не удалось проверить конфигурацию корневого узла ZeroTier."
+
+msgctxt "native"
+msgid "This network requires a different ZeroTier root configuration"
+msgstr "Этой сети нужна другая конфигурация корневых узлов ZeroTier."
+
+msgctxt "native"
+msgid "Invalid ZeroTier network list"
+msgstr "Не удалось прочитать список сетей ZeroTier."
+
+msgctxt "native"
+msgid "Waiting for virtual IP"
+msgstr "Адаптер ещё не получил виртуальный IP-адрес."
+
+msgctxt "native"
+msgid "Windows unavailable"
+msgstr "Не удалось получить доступ к компонентам Windows."
+
+msgctxt "native"
+msgid "Could not change Uplink adapter power"
+msgstr "Не удалось переключить сетевой адаптер Uplink."
+
+msgctxt "native"
+msgid "Unexpected network"
+msgstr "Сервер вернул данные другой сети."
+
+msgctxt "native"
+msgid "Invalid saved network"
+msgstr "Не удалось прочитать сохранённую сеть."
+
+msgctxt "native"
+msgid "Uplink is disabled"
+msgstr "Uplink выключен."
+
+msgctxt "native"
+msgid "ZeroTier identity has changed"
+msgstr "На этом компьютере изменился идентификатор устройства ZeroTier."
+
+msgctxt "native"
+msgid "Network already managed outside Uplink"
+msgstr "На этом компьютере сеть уже подключена вне Uplink."
+
+msgctxt "native"
+msgid "Local ZeroTier service unavailable"
+msgstr "Локальная служба ZeroTier недоступна."
+
+msgctxt "native"
+msgid "ProgramData unavailable"
+msgstr "Не удалось открыть каталог общих данных Windows."
+
+msgctxt "native"
+msgid "Cannot initialize the Uplink tray menu"
+msgstr "Не удалось открыть меню Uplink в трее."
+
+msgctxt "native"
+msgid "Uplink power operation failed"
+msgstr "Не удалось переключить состояние Uplink."
+
+msgctxt "native"
+msgid "Previous Uplink process is still running"
+msgstr "Предыдущий экземпляр Uplink ещё работает."
+
+msgctxt "native"
+msgid "Invalid setup arguments"
+msgstr "Некорректные параметры запуска установщика."
+
+msgctxt "native"
+msgid "Invalid setup mode"
+msgstr "Не удалось определить режим установки."
+
+msgctxt "native"
+msgid "Could not open the image file."
+msgstr "Не удалось открыть файл изображения."
+
+msgctxt "native"
+msgid "The server upload limit is too low for this avatar."
+msgstr "Аватар превышает лимит загрузки на сервере."

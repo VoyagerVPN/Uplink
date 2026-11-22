@@ -81,7 +81,9 @@ def route(method, path, data):
     if path == "/v1/leave":
         return 200, api.leave(data.get("session"))
     if path == "/v1/sync":
-        return 200, api.sync(data.get("session"), data.get("nick"))
+        return 200, api.sync(data.get("session"), data.get("nick"), data.get("avatar_revision"))
+    if path == "/v1/avatar":
+        return 200, api.manage(data.get("session"), "avatar", data.get("value"))
     if path == "/v1/manage":
         return 200, api.manage(data.get("session"), data.get("action"), data.get("value"))
     if path == "/v1/ping":
@@ -93,6 +95,9 @@ def route(method, path, data):
 
 class ClientRequest(OwnerRequest):
     route = staticmethod(route)
+
+    def request_limit(self):
+        return 1_411_024 if self.command == "POST" and self.path == "/v1/avatar" else super().request_limit()
 
     def log_request(self, code="-", size="-"):
         # При ошибке клиент может прислать секрет в пути.

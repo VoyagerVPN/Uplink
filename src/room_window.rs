@@ -3,9 +3,9 @@ mod avatar;
 mod network_window;
 mod setup_window;
 mod tray_menu;
-mod update_window;
 #[cfg(debug_assertions)]
 mod update_preview;
+mod update_window;
 use network_window::bind_network;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{io, path::Path, rc::Rc};
@@ -124,6 +124,14 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
             net.set_link("".into());
         }
         net.set_manages(room.manages());
+        net.set_avatar_editable(
+            room.live
+                .as_ref()
+                .is_none_or(|r| r.avatar_revision.is_some()),
+        );
+        if !net.get_avatar_editable() && net.get_modal() == "crop" {
+            net.invoke_close_modal();
+        }
         net.set_owner(!room.creator_ip.is_empty() && room.creator_ip == room.own_ip);
         net.set_link_on(!room.policy.link_disabled);
         net.set_qr_on(room.policy.qr);
@@ -165,25 +173,36 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
         ui.set_room_name("".into());
         ui.set_members(ModelRc::default());
     }
+    let prefs = settings::path().ok();
     let mut rows: Vec<_> = rooms
         .into_iter()
-        .map(|r| SavedRoom {
-            has_avatar: !r.policy.avatar.is_empty(),
-            avatar: avatar::stored(&r.policy.avatar).unwrap_or_default(),
-            initials: if r.url == invite::PINE && r.name == "Еловый бор" {
-                "Ел".into()
+        .map(|r| {
+            let image = if let Some(live) = &r.live {
+                prefs
+                    .as_deref()
+                    .and_then(|p| live.avatar_file(p))
+                    .and_then(|path| slint::Image::load_from_path(&path).ok())
             } else {
-                r.name
-                    .split_whitespace()
-                    .take(2)
-                    .filter_map(|word| word.chars().next())
-                    .flat_map(char::to_uppercase)
-                    .collect::<String>()
-                    .into()
-            },
-            name: r.name.into(),
-            url: r.url.into(),
-            server: r.server.into(),
+                avatar::stored(&r.policy.avatar)
+            };
+            SavedRoom {
+                has_avatar: image.is_some(),
+                avatar: image.unwrap_or_default(),
+                initials: if r.url == invite::PINE && r.name == "Еловый бор" {
+                    "Ел".into()
+                } else {
+                    r.name
+                        .split_whitespace()
+                        .take(2)
+                        .filter_map(|word| word.chars().next())
+                        .flat_map(char::to_uppercase)
+                        .collect::<String>()
+                        .into()
+                },
+                name: r.name.into(),
+                url: r.url.into(),
+                server: r.server.into(),
+            }
         })
         .collect();
     if let Some(first) = rows.first() {
@@ -231,7 +250,7 @@ fn apply_language(ui: &RoomWindow, code: &str) {
 }
 
 fn show_error(ui: &RoomWindow, error: io::Error) {
-    ui.set_error(uplink::i18n::message(&ui.get_language_code(), &error.to_string()).into());
+    ui.set_error(uplink::i18n::error_message(&ui.get_language_code(), &error.to_string()).into());
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -312,7 +331,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let Some(ui) = weak.upgrade() else { return };
         let result = settings::set_option(&prefs, &key, value).and_then(|()| {
             apply_options(&ui, settings::options(&prefs)?, uplink::startup::enabled()?);
-            if key == "autoupdate" && value { let _ = uplink::control::send(uplink::control::UPDATE_AUTO); }
+            if key == "autoupdate" && value {
+                let _ = uplink::control::send(uplink::control::UPDATE_AUTO);
+            }
             uplink::control::refresh_tray_icon();
             Ok(())
         });

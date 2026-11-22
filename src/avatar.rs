@@ -83,13 +83,18 @@ pub struct Draft {
 }
 impl Draft {
     pub fn open(path: &Path) -> io::Result<Self> {
-        let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-        let (w, h) = reader.into_dimensions().map_err(io::Error::other)?;
+        let open = || {
+            image::ImageReader::open(path)
+                .and_then(|r| r.with_guessed_format())
+                .map_err(|_| io::Error::other("Could not open the image file."))
+        };
+        let (w, h) = open()?
+            .into_dimensions()
+            .map_err(|_| io::Error::other("Unsupported image"))?;
         if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 48_000_000 {
             return Err(io::Error::other("Image is too large"));
         }
-        let img = image::ImageReader::open(path)?
-            .with_guessed_format()?
+        let img = open()?
             .decode()
             .map_err(|_| io::Error::other("Unsupported image"))?;
         let image = img.into_rgba8();
@@ -143,12 +148,15 @@ impl Draft {
             rgb
         }))
     }
-    pub fn encode(&self) -> io::Result<String> {
+    pub fn encode(&self, live: bool) -> io::Result<String> {
         let side = self.side().round().max(1.) as u32;
         let x = ((self.x - self.side() / 2.).round() as u32).min(self.image.width() - side);
         let y = ((self.y - self.side() / 2.).round() as u32).min(self.image.height() - side);
         let square = imageops::crop_imm(&self.image, x, y, side, side).to_image();
         let scaled = imageops::resize(&square, 512, 512, imageops::FilterType::Lanczos3);
+        if live {
+            return uplink::network_avatar::encode(scaled.as_raw());
+        }
         let mut out = Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(scaled)
             .write_to(&mut out, ImageFormat::Png)

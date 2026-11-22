@@ -153,10 +153,13 @@ class OwnerRequest(BaseHTTPRequestHandler):
     def address_string(self):
         return "local-owner"
 
+    def request_limit(self):
+        return 4096
+
     def handle_request(self):
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 <= size <= 4096:
+            if not 0 <= size <= self.request_limit():
                 raise ApiError(413, "Invalid body size")
             data = json.loads(self.rfile.read(size)) if size else {}
             if not isinstance(data, dict):

@@ -181,7 +181,7 @@ pub fn refresh_transport(path: &Path) -> io::Result<bool> {
                     crate::transport::attach(live.interface_id())?;
                 }
                 adapter_available = true;
-                live.refresh(&nick)
+                live.refresh(&nick, path)
             })()
         } else if live.transport.is_some() {
             Ok(())
@@ -323,6 +323,7 @@ fn join_with_setup(path: &Path, url: &str, allow_setup_prompt: bool) -> io::Resu
         if let Err(err) = live.enroll(
             token,
             &nick,
+            path,
             returning,
             prior.as_ref().map(|r| r.session.as_str()),
         ) {

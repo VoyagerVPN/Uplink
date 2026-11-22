@@ -68,9 +68,9 @@ export component NetworkDialog inherits FocusScope {
                     }
                 }
                 HorizontalLayout{height:32px;
-                    Action{caption:@tr("Replace photo");leading-icon:true;glyph:@image-url("../assets/icon/replace.svg");filled:true;invoked=>{NetworkUi.action("pick","");}}
+                    Action{available:!NetworkUi.saving;caption:@tr("Replace photo");leading-icon:true;glyph:@image-url("../assets/icon/replace.svg");filled:true;invoked=>{NetworkUi.action("pick","");}}
                     Rectangle{}
-                    Action{caption:@tr("Save");leading-icon:true;glyph:@image-url("../assets/icon/check.svg");primary:true;invoked=>{NetworkUi.action("save-avatar","");}}
+                    Action{available:!NetworkUi.saving;caption:@tr("Save");leading-icon:true;glyph:@image-url("../assets/icon/check.svg");primary:true;invoked=>{NetworkUi.action("save-avatar","");}}
                 }
             }
             if NetworkUi.modal=="transfer" || NetworkUi.modal=="remove": VerticalLayout{spacing:12px;

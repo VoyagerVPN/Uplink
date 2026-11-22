@@ -110,6 +110,30 @@ fn saved_networks_can_be_switched_from_the_main_screen() {
 }
 
 #[test]
+fn avatar_picker_opens_only_on_instances_that_support_it() {
+    let (ui, surface) = open();
+    let net = ui.global::<NetworkUi>();
+    net.set_manages(true);
+    net.set_panel("general".into());
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let capture = actions.clone();
+    net.on_action(move |action, _| capture.borrow_mut().push(action.to_string()));
+    platform::update_timers_and_animations();
+    let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+    surface.draw_if_needed(|r| {
+        r.render(&mut pixels, 388);
+    });
+    platform::update_timers_and_animations();
+    let bounds = net.get_drop_bounds();
+    assert!(bounds.w > 0.);
+    click(&ui, bounds.x + 30., bounds.y + 30.);
+    assert!(actions.borrow().is_empty());
+    net.set_avatar_editable(true);
+    click(&ui, bounds.x + 30., bounds.y + 30.);
+    assert_eq!(*actions.borrow(), ["pick"]);
+}
+
+#[test]
 fn russian_paste_in_invitation_input() {
     let (ui, _) = open();
     let submitted = Rc::new(RefCell::new(String::new()));

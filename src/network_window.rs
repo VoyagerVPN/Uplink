@@ -5,12 +5,12 @@ type Editor = Rc<RefCell<Option<avatar::Draft>>>;
 
 fn problem(ui: &RoomWindow, e: io::Error) {
     ui.global::<NetworkUi>()
-        .set_error(uplink::i18n::message(&ui.get_language_code(), &e.to_string()).into());
+        .set_error(uplink::i18n::error_message(&ui.get_language_code(), &e.to_string()).into());
 }
 
 fn load_file(ui: &RoomWindow, draft: &Editor, path: PathBuf) {
     let net = ui.global::<NetworkUi>();
-    if !net.get_manages() || net.get_panel() != "general" {
+    if !net.get_manages() || !net.get_avatar_editable() || net.get_panel() != "general" {
         return;
     }
     match avatar::Draft::open(&path) {
@@ -90,13 +90,34 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
             return;
         }
         if action == "pick" {
-            if let Some(path) = avatar::pick() {
+            if net.get_avatar_editable()
+                && let Some(path) = avatar::pick()
+            {
                 load_file(&ui, &d, path);
             }
             return;
         }
         let url = ui.get_invite_url();
-        if net.get_live() && action != "save-avatar" {
+        let (action, value) = if action == "save-avatar" {
+            if !net.get_avatar_editable() {
+                return;
+            }
+            let result = d
+                .borrow()
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Select an image"))
+                .and_then(|p| p.encode(net.get_live()));
+            match result {
+                Ok(photo) => ("avatar".into(), slint::SharedString::from(photo)),
+                Err(e) => {
+                    problem(&ui, e);
+                    return;
+                }
+            }
+        } else {
+            (action, value)
+        };
+        if net.get_live() {
             net.set_saving(true);
             let (action, value, url) = (action.to_string(), value.to_string(), url.to_string());
             let path = profile.as_ref().clone();
@@ -111,7 +132,9 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
                     }
                     match result.and_then(|_| settings::rooms(&path)) {
                         Ok(rooms) => {
-                            if matches!(action.as_str(), "transfer" | "remove") {
+                            if matches!(action.as_str(), "transfer" | "remove")
+                                || action == "avatar" && net.get_modal() == "crop"
+                            {
                                 net.invoke_close_modal();
                             }
                             if action == "password" {
@@ -129,18 +152,10 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
             });
             return;
         }
-        let result = if action == "save-avatar" {
-            d.borrow()
-                .as_ref()
-                .ok_or_else(|| io::Error::other("Select an image"))
-                .and_then(|p| p.encode())
-                .and_then(|encoded| settings::network_action(&profile, &url, "avatar", &encoded))
-        } else {
-            settings::network_action(&profile, &url, &action, &value)
-        };
+        let result = settings::network_action(&profile, &url, &action, &value);
         match result.and_then(|()| settings::rooms(&profile)) {
             Ok(rooms) => {
-                if matches!(action.as_str(), "save-avatar" | "transfer" | "remove") {
+                if matches!(action.as_str(), "avatar" | "transfer" | "remove") {
                     net.invoke_close_modal();
                 }
                 net.set_setting_password(false);
@@ -200,7 +215,11 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
     window.window().on_winit_window_event(move |win, event| {
         if let Some(ui) = weak.upgrade() {
             let net = ui.global::<NetworkUi>();
-            if net.get_manages() && net.get_panel() == "general" && net.get_modal().is_empty() {
+            if net.get_manages()
+                && net.get_avatar_editable()
+                && net.get_panel() == "general"
+                && net.get_modal().is_empty()
+            {
                 match event {
                     WindowEvent::HoveredFile(_) => net.set_dragging_file(true),
                     WindowEvent::HoveredFileCancelled => net.set_dragging_file(false),

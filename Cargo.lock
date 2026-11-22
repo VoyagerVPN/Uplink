@@ -5089,11 +5089,12 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
 name = "uplink"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64",
  "clipboard-win",
  "curl",
+ "flate2",
  "image",
  "p256",
  "qrcode",

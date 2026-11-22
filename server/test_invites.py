@@ -95,6 +95,76 @@ class InvitationsTest(unittest.TestCase):
         self.assertEqual(denied.exception.status, 403)
         self.assertFalse(self.members[other]["authorized"])
 
+    def test_network_avatar_is_shared_only_when_changed(self):
+        import base64
+        import zlib
+        self.pending()
+        self.api.redeem(self.api.issue(self.network), self.node, self.session, "Owner")
+        self.api.assign_owner(self.network, self.node)
+        peer, session = "2345678901", "b" * 64
+        self.members[peer] = {"authorized": False, "ipAssignments": ["10.9.0.24"]}
+        self.api.redeem(self.api.issue(self.network), peer, session, "Peer")
+        photo = base64.b64encode(zlib.compress(bytes([25, 50, 75, 255]) * (512 * 512))).decode()
+        self.assertEqual(self.api.sync(session, "Peer", "")["avatar_revision"], "")
+        with self.assertRaises(ApiError):
+            self.api.manage(session, "avatar", photo)
+        self.api.manage(self.session, "avatar", photo)
+        sync = self.api.sync(session, "Peer", "")
+        self.assertEqual(sync["avatar"], photo)
+        self.assertNotIn("avatar", self.api.sync(session, "Peer", sync["avatar_revision"]))
+        self.assertNotIn("avatar", self.api.sync(session, "Old client"))
+        self.api.manage(self.session, "role", peer)
+        with self.assertRaises(ApiError):
+            self.api.manage(session, "avatar", base64.b64encode(zlib.compress(b"bad")).decode())
+        replacement = base64.b64encode(zlib.compress(bytes([10, 20, 30, 255]) * (512 * 512))).decode()
+        self.api.manage(session, "avatar", replacement)
+        updated = self.api.sync(self.session, "Owner", sync["avatar_revision"])
+        self.assertEqual(updated["avatar"], replacement)
+        self.assertNotEqual(updated["avatar_revision"], sync["avatar_revision"])
+
+    def test_avatar_http_upload_and_peer_sync(self):
+        import base64
+        import http.client
+        import json
+        import random
+        import zlib
+        from unittest.mock import patch
+        from client_api import ClientRequest, ClientServer
+
+        self.pending()
+        self.api.redeem(self.api.issue(self.network), self.node, self.session, "Owner")
+        self.api.assign_owner(self.network, self.node)
+        peer = "2345678901"
+        self.members[peer] = {"authorized": False, "ipAssignments": []}
+        session = "b" * 64
+        self.api.redeem(self.api.issue(self.network), peer, session, "Peer")
+        image = random.Random(42).randbytes(512 * 512 * 4)
+        upload = base64.b64encode(zlib.compress(image)).decode("ascii")
+        with ClientServer(("127.0.0.1", 0), ClientRequest) as server, patch("client_api.Invitations", return_value=self.api):
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+            try:
+                def post(path, body):
+                    conn = http.client.HTTPConnection(*server.server_address, timeout=10)
+                    try:
+                        conn.request("POST", "/v1/" + path, json.dumps(body))
+                        reply = conn.getresponse()
+                        return reply.status, json.loads(reply.read())
+                    finally:
+                        conn.close()
+
+                self.assertEqual(post("avatar", {"session": session, "value": upload})[0], 403)
+                self.assertEqual(post("avatar", {"session": self.session, "value": upload})[0], 200)
+                status, snapshot = post("sync", {"session": session, "nick": "Peer", "avatar_revision": ""})
+                self.assertEqual(status, 200)
+                self.assertEqual(zlib.decompress(base64.b64decode(snapshot["avatar"])), image)
+                _, unchanged = post("sync", {"session": session, "nick": "Peer", "avatar_revision": snapshot["avatar_revision"]})
+                self.assertNotIn("avatar", unchanged)
+                self.assertEqual(post("ping", {"padding": "x" * 5000})[0], 413)
+            finally:
+                server.shutdown()
+                worker.join()
+
     def test_pending_retry_and_replay(self):
         token = self.api.issue(self.network)
         self.assertEqual(self.api.lookup(token)["id"], self.network)

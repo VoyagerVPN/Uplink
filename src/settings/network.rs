@@ -104,6 +104,7 @@ pub fn network_action(path: &Path, url: &str, action: &str, value: &str) -> io::
                 .map(|r| r.node.as_str())
                 .ok_or_else(|| io::Error::other("Participant is unavailable"))?,
             "name" => validated_name(value, 64)?,
+            "avatar" if live.avatar_revision.is_some() => value,
             "password" if !value.is_empty() && value.len() <= 512 => value,
             "password-mode" if live.methods.as_ref().is_some_and(|m| m.password) => "off",
             "link" => {
