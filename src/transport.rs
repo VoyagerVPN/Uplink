@@ -1,3 +1,4 @@
+use crate::settings::join_log;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -62,19 +63,37 @@ fn home() -> io::Result<PathBuf> {
 }
 
 fn zt(args: &[&str]) -> io::Result<Vec<u8>> {
+    join_log::operation(match args.first().copied() {
+        Some("info") => "zt_info",
+        Some("listnetworks") => "zt_list_networks",
+        Some("join") => "zt_attach",
+        Some("leave") => "zt_detach",
+        _ => "zt_command",
+    });
     let output = Command::new(home()?.join("zerotier-one_x64.exe"))
         .args(["-q", "-j"])
         .args(args)
         .creation_flags(0x08000000)
         .output()?;
     if !output.status.success() {
+        if let Some(code) = output.status.code() {
+            join_log::number("exit_code", code.into());
+        }
         return Err(io::Error::other("Local ZeroTier service unavailable"));
     }
     Ok(output.stdout)
 }
 
 fn query(args: &[&str]) -> io::Result<Value> {
-    Ok(serde_json::from_slice(&zt(args)?)?)
+    parse_reply(&zt(args)?)
+}
+
+fn parse_reply(bytes: &[u8]) -> io::Result<Value> {
+    serde_json::from_slice(bytes).map_err(|err| {
+        join_log::number("json_line", err.line() as i64);
+        join_log::number("json_column", err.column() as i64);
+        err.into()
+    })
 }
 
 fn post(host: &str, endpoint: &str, body: Value) -> io::Result<Value> {
@@ -87,6 +106,15 @@ thread_local! {
 }
 
 fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> {
+    join_log::operation(match endpoint {
+        "login" => "http_login",
+        "bootstrap" => "http_bootstrap",
+        "redeem" => "http_redeem",
+        "sync" => "http_sync",
+        "attest" => "http_attest",
+        "ping" => "http_ping",
+        _ => "http_request",
+    });
     let body = serde_json::to_vec(&body)?;
     let (status, response, latency) = HTTPS
         .with_borrow_mut(|client| {
@@ -95,10 +123,14 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
             client.reset();
             result
         })
-        .map_err(|_| io::Error::other("Could not reach Uplink over HTTPS"))?;
+        .map_err(|err| {
+            join_log::number("curl_code", err.code().into());
+            io::Error::other("Could not reach Uplink over HTTPS")
+        })?;
+    join_log::number("http_status", status.into());
 
     match status {
-        200 => Ok((serde_json::from_slice(&response)?, latency)),
+        200 => Ok((parse_reply(&response)?, latency)),
         409 if serde_json::from_slice::<Value>(&response)
             .is_ok_and(|v| v["error"] == "Network name already in use") =>
         {
@@ -209,14 +241,49 @@ pub fn password_invite(host: &str, name: &str, password: &str) -> io::Result<Str
 
 fn device_is_prepared(home: &std::path::Path) -> bool {
     let proof = home.join("uplink-proof");
-    home.join("zerotier-one_x64.exe").is_file()
-        && ["certificate", "delegate.public", "delegate.secret"]
-            .iter()
-            .all(|name| {
-                fs::File::open(proof.join(name))
-                    .and_then(|file| file.metadata())
-                    .is_ok_and(|info| info.is_file() && info.len() > 0)
-            })
+    join_log::operation("check_zt_executable");
+    if !home.join("zerotier-one_x64.exe").is_file() {
+        return false;
+    }
+    for (name, op) in [
+        ("certificate", "check_certificate"),
+        ("delegate.public", "check_public_key"),
+        ("delegate.secret", "check_signing_key"),
+    ] {
+        join_log::operation(op);
+        match fs::File::open(proof.join(name)).and_then(|file| file.metadata()) {
+            Ok(info) if info.is_file() && info.len() > 0 => {}
+            Ok(_) => {
+                join_log::number("valid_file", 0);
+                return false;
+            }
+            Err(error) => {
+                if let Some(code) = error.raw_os_error() {
+                    join_log::number("win32", code.into());
+                }
+                return false;
+            }
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+#[test]
+fn device_stage_records_a_missing_planet_without_disclosing_paths_or_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = dir.path().join("prefs.json");
+    let error = crate::settings::join_log::run(&profile, "link", &|_| {}, |progress| {
+        progress(crate::settings::JoinStage::Device);
+        verify_planet(dir.path(), b"private-planet-fixture")
+    })
+    .unwrap_err();
+    let log = fs::read_to_string(dir.path().join("last-join.log")).unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert!(log.contains("stage=device"));
+    assert!(log.contains("result=failed operation=read_planet kind=NotFound win32=2"));
+    assert!(!log.contains("private-planet-fixture"));
+    assert!(!log.contains(dir.path().to_str().unwrap()));
 }
 
 #[cfg(test)]
@@ -240,6 +307,7 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
     if device_is_prepared(home) {
         return Ok(());
     }
+    join_log::operation("locate_setup_helper");
     let helper = std::env::current_exe()?.with_file_name("UplinkNetwork.exe");
     if !helper.is_file() {
         return Err(io::Error::other(
@@ -252,6 +320,7 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
             .ok_or_else(|| io::Error::other("Missing local profile"))?,
     )
     .join("Uplink/requests");
+    join_log::operation("create_setup_request");
     fs::create_dir_all(&root)?;
     let request = uuid::Uuid::new_v4().simple().to_string();
     let file = root.join(&request);
@@ -261,12 +330,14 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
         .create_new(true)
         .open(&file)?;
     let guard = tempfile::TempPath::try_from_path(&file)?;
+    join_log::operation("write_setup_request");
     write!(out, "uplink://{host}/invite/{token}")?;
     drop(out);
     let ps = PathBuf::from(
         std::env::var_os("SystemRoot").ok_or_else(|| io::Error::other("Missing Windows path"))?,
     )
     .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    join_log::operation("run_setup_helper");
     let result = Command::new(ps)
         .args(["-NoProfile","-NonInteractive","-Command",
             "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; try { $p=Start-Process -FilePath $env:UPLINK_NETWORK_HELPER -Verb RunAs -ArgumentList ('prepare '+$sid+' '+$env:UPLINK_NETWORK_REQUEST) -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { if ($_.Exception.GetBaseException().NativeErrorCode -eq 1223) {exit 38}; exit 2 }"])
@@ -274,6 +345,13 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
         .creation_flags(0x08000000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
     drop(guard);
     let _ = fs::remove_dir(root);
+    setup_outcome(result)
+}
+
+fn setup_outcome(result: std::process::ExitStatus) -> io::Result<()> {
+    if let Some(code) = result.code() {
+        join_log::number("exit_code", code.into());
+    }
     if !result.success() {
         return Err(io::Error::other(match result.code() {
             Some(31) => "Could not get the ZeroTier configuration from the server.",
@@ -290,12 +368,40 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
     Ok(())
 }
 
+#[cfg(test)]
+#[test]
+fn setup_exit_code_is_visible_alongside_the_reported_device_failure() {
+    use std::os::windows::process::ExitStatusExt;
+    let dir = tempfile::tempdir().unwrap();
+    let profile = dir.path().join("prefs.json");
+    let result = join_log::run(&profile, "link", &|_| {}, |progress| {
+        progress(crate::settings::JoinStage::Device);
+        join_log::operation("run_setup_helper");
+        setup_outcome(std::process::ExitStatus::from_raw(35))
+    });
+    assert!(result.is_err());
+    let log = fs::read_to_string(dir.path().join("last-join.log")).unwrap();
+    assert!(log.contains("operation=run_setup_helper exit_code=35"));
+    assert!(log.contains("reason=The local ZeroTier service could not be prepared."));
+}
+
+fn verify_planet(home: &std::path::Path, expected: &[u8]) -> io::Result<()> {
+    join_log::operation("read_planet");
+    if fs::read(home.join("planet"))? != expected {
+        return Err(io::Error::other(
+            "This network requires a different ZeroTier root configuration",
+        ));
+    }
+    Ok(())
+}
+
 pub fn bootstrap(
     host: &str,
     token: &str,
     allow_setup_prompt: bool,
     progress: &dyn Fn(crate::settings::JoinStage),
 ) -> io::Result<Membership> {
+    join_log::operation("locate_zerotier");
     let home = home()?;
     if !allow_setup_prompt && !device_is_prepared(&home) {
         return Err(io::Error::other(
@@ -303,6 +409,7 @@ pub fn bootstrap(
         ));
     }
     let info = post(host, "bootstrap", json!({"token": token, "version":2}))?;
+    join_log::operation("decode_server_planet");
     let planet = STANDARD
         .decode(info["planet"].as_str().unwrap_or(""))
         .map_err(io::Error::other)?;
@@ -313,11 +420,8 @@ pub fn bootstrap(
     if allow_setup_prompt {
         prepare_device(&home, host, token)?;
     }
-    if fs::read(home.join("planet"))? != planet {
-        return Err(io::Error::other(
-            "This network requires a different ZeroTier root configuration",
-        ));
-    }
+    verify_planet(&home, &planet)?;
+    join_log::operation("read_network_ids");
     Ok(Membership {
         host: host.into(),
         avatar_revision: None,
@@ -517,6 +621,7 @@ impl Membership {
             )
             .is_ok();
         if !resume {
+            join_log::operation("sign_device_proof");
             let proof = crate::device_proof::sign(&home()?, &self.node, token, &self.session)?;
             let deadline = start + Duration::from_secs(25);
             retry_redeem(

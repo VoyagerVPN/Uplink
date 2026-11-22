@@ -248,7 +248,6 @@ fn start_join(
     path: &Path,
     join: impl FnOnce(&Path, &dyn Fn(settings::JoinStage)) -> io::Result<()> + Send + 'static,
 ) {
-    use std::io::Write;
     let net = ui.global::<NetworkUi>();
     if net.get_joining() {
         return;
@@ -260,42 +259,12 @@ fn start_join(
     let weak = ui.as_weak();
     let path = path.to_owned();
     std::thread::spawn(move || {
-        let log = std::cell::RefCell::new(path.parent().and_then(|p| {
-            std::fs::create_dir_all(p).ok()?;
-            std::fs::File::create(p.join("last-join.log")).ok()
-        }));
-        let record = |message: &str| {
-            let time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if let Some(file) = log.borrow_mut().as_mut() {
-                let _ = writeln!(file, "{time} {message}");
-            }
-        };
-        let last_step = std::cell::Cell::new(0);
         let progress = |step: settings::JoinStage| {
-            if last_step.replace(step as i32) == step as i32 {
-                return;
-            }
-            record(match step {
-                settings::JoinStage::Access => "stage=access",
-                settings::JoinStage::Device => "stage=device",
-                settings::JoinStage::Approval => "stage=approval",
-                settings::JoinStage::Address => "stage=address",
-            });
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 ui.global::<NetworkUi>().set_join_step(step as i32)
             });
         };
         let result = join(&path, &progress);
-        match &result {
-            Ok(()) => record("result=ok"),
-            Err(e) => record(&format!(
-                "result=failed reason={}",
-                uplink::i18n::error_message("en", &e.to_string())
-            )),
-        }
         let _ = weak.upgrade_in_event_loop(move |ui| {
             ui.global::<NetworkUi>().set_joining(false);
             finish_room_change(&ui, &path, result);

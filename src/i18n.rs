@@ -1,5 +1,9 @@
 include!(concat!(env!("OUT_DIR"), "/languages.rs"));
 
+pub(crate) fn diagnostic_reason(source: &str) -> Option<&str> {
+    known_source(source).then_some(source)
+}
+
 pub fn error_message<'a>(code: &str, source: &'a str) -> &'a str {
     if known_source(source) {
         message(code, source)

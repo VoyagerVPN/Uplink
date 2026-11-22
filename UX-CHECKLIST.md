@@ -196,6 +196,7 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [x] Show progress for an invitation or password join, including links opened from another application. Clear the previous error when retrying and keep the form available after failure.
 - [x] Confirm invitation copying with the same two-second check as IP copying. Let users copy the server address from the network and both the address and network name from password invitations.
 - [x] Identify API stages and rejection reasons in the server journal. Correlate ticket issuance and enrollment without exposing the ticket, password, session or device proof.
+- [x] Record the join method, timed local operations and available Windows, process, curl and HTTP codes in the Windows join log. Cover link, password and headless joins without logging credentials or raw diagnostic text.
 - [x] Join by invitation and password on an isolated controller with two ZeroTier peers and verify that both receive different virtual IPs.
 - [ ] Confirm the reported first join on the affected Windows PC. The server journal from before the logging change did not record the failed operation.
 

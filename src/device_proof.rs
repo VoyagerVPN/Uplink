@@ -34,13 +34,23 @@ fn challenge_digest(node: &str, challenge: &str, session: &str) -> io::Result<St
 }
 
 pub fn sign(home: &Path, node: &str, challenge: &str, session: &str) -> io::Result<Value> {
+    use crate::settings::join_log;
     let keys = home.join("uplink-proof");
-    let missing = |_| io::Error::other("Run the Uplink transport installer to verify this device");
+    let missing = |err: io::Error| {
+        if let Some(code) = err.raw_os_error() {
+            join_log::number("win32", code.into());
+        }
+        io::Error::other("Run the Uplink transport installer to verify this device")
+    };
+    join_log::operation("read_proof_public_key");
     let delegate = fs::read_to_string(keys.join("delegate.public")).map_err(missing)?;
+    join_log::operation("read_proof_certificate");
     let certificate = fs::read_to_string(keys.join("certificate")).map_err(missing)?;
+    join_log::operation("prepare_proof_challenge");
     let mut msg = tempfile::NamedTempFile::new()?;
     msg.write_all(challenge_digest(node, challenge, session)?.as_bytes())?;
     msg.flush()?;
+    join_log::operation("sign_proof_challenge");
     let output = Command::new(home.join("zerotier-one_x64.exe"))
         .args(["-i", "sign"])
         .arg(keys.join("delegate.secret"))
@@ -50,6 +60,9 @@ pub fn sign(home: &Path, node: &str, challenge: &str, session: &str) -> io::Resu
         .creation_flags(0x08000000)
         .output()?;
     if !output.status.success() {
+        if let Some(code) = output.status.code() {
+            join_log::number("exit_code", code.into());
+        }
         return Err(io::Error::other(
             "Run the Uplink transport installer to verify this device",
         ));

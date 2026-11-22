@@ -1,4 +1,5 @@
 use serde_json::Value;
+pub(crate) mod join_log;
 mod network;
 mod password;
 pub use network::network_password;
@@ -340,15 +341,36 @@ pub fn join_with_progress(
     allow_setup_prompt: bool,
     progress: &dyn Fn(JoinStage),
 ) -> io::Result<()> {
+    join_log::run(
+        path,
+        if allow_setup_prompt {
+            "link"
+        } else {
+            "headless_link"
+        },
+        progress,
+        |notify| join_link(path, url, allow_setup_prompt, notify),
+    )
+}
+
+fn join_link(
+    path: &Path,
+    url: &str,
+    allow_setup_prompt: bool,
+    progress: &dyn Fn(JoinStage),
+) -> io::Result<()> {
     progress(JoinStage::Access);
     if let Some((host, token)) = crate::invite::instance_link(url) {
+        join_log::operation("lock_transport");
         let _guard = transport_lock(path)?;
+        join_log::operation("read_settings");
         if !options(path)?.enabled {
             return Err(io::Error::other("Uplink is disabled"));
         }
         let mut live = crate::transport::bootstrap(host, token, allow_setup_prompt, progress)?;
         let key = live.key();
         let existing = crate::transport::interface(live.interface_id())?.is_some();
+        join_log::operation("read_memberships");
         let prefs = read(path)?;
         let returning = prefs["live"][&key].is_object() || prefs["pending"][&key].is_object();
         let known = live
@@ -362,6 +384,7 @@ pub fn join_with_progress(
                 && r.node == live.node
                 && r.id != live.id
         });
+        join_log::operation("save_pending_membership");
         update(path, |prefs| {
             if let Some(prev) = prefs["live"][&key]
                 .as_object()
@@ -379,6 +402,7 @@ pub fn join_with_progress(
             prefs["pending"][&key] = serde_json::to_value(&live)?;
             Ok(())
         })?;
+        join_log::operation("read_nickname");
         let nick = nickname(path, &crate::peers::windows_name())?;
         if let Err(err) = live.enroll(
             token,
@@ -389,10 +413,11 @@ pub fn join_with_progress(
             progress,
         ) {
             if !existing && !known && prior.is_none() {
-                crate::transport::detach(live.interface_id())?;
+                join_log::rollback(|| crate::transport::detach(live.interface_id()));
             }
             return Err(err);
         }
+        join_log::operation("save_membership");
         return update(path, |prefs| {
             if let Some(id) = &live.transport {
                 prefs["shared_devices"][id] = Value::String(host.to_owned());
@@ -402,6 +427,7 @@ pub fn join_with_progress(
             select_url(prefs, &key, true)
         });
     }
+    join_log::operation("open_invitation");
     open_room(path, url, true)
 }
 pub fn select(path: &Path, url: &str) -> io::Result<()> {

@@ -301,6 +301,28 @@ pub fn join_on_server(path: &Path, server: &str, name: &str, password: &str) -> 
     join_on_server_with_progress(path, server, name, password, &|_| {})
 }
 
+#[test]
+fn failed_password_join_records_the_operation_and_windows_error_without_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = dir.path().join("prefs.json");
+    std::fs::create_dir(&profile).unwrap();
+    let error = join_on_server(
+        &profile,
+        "private-host.example",
+        "private-name",
+        "private-password",
+    )
+    .unwrap_err();
+    let log = std::fs::read_to_string(dir.path().join("last-join.log")).unwrap();
+    assert!(log.contains("method=password"));
+    assert!(log.contains("stage=access"));
+    assert!(log.contains("result=failed operation=read_settings"));
+    assert!(log.contains(&format!("win32={}", error.raw_os_error().unwrap())));
+    for secret in ["private-host", "private-name", "private-password"] {
+        assert!(!log.contains(secret));
+    }
+}
+
 pub fn join_on_server_with_progress(
     path: &Path,
     server: &str,
@@ -308,7 +330,20 @@ pub fn join_on_server_with_progress(
     password: &str,
     progress: &dyn Fn(super::JoinStage),
 ) -> io::Result<()> {
+    super::join_log::run(path, "password", progress, |notify| {
+        join_with_password(path, server, name, password, notify)
+    })
+}
+
+fn join_with_password(
+    path: &Path,
+    server: &str,
+    name: &str,
+    password: &str,
+    progress: &dyn Fn(super::JoinStage),
+) -> io::Result<()> {
     progress(super::JoinStage::Access);
+    super::join_log::operation("read_settings");
     if !options(path)?.enabled {
         return Err(io::Error::other("Uplink is disabled"));
     }
@@ -320,9 +355,11 @@ pub fn join_on_server_with_progress(
             if room.name.trim().to_lowercase() != name.trim().to_lowercase() {
                 return Err(io::Error::other("Invalid network credentials"));
             }
+            super::join_log::operation("check_credentials");
             return join_credentials(path, &host, password);
         }
     }
+    super::join_log::operation("password_login");
     let link = crate::transport::password_invite(&host, name.trim(), password)?;
-    super::join_with_progress(path, &link, true, progress)
+    super::join_link(path, &link, true, progress)
 }
