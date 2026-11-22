@@ -1,0 +1,12 @@
+[Unit]
+Description=Uplink instance owner API
+
+[Socket]
+ListenStream=/run/uplink-instance.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0600
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

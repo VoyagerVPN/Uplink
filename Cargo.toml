@@ -1,0 +1,49 @@
+[package]
+name = "uplink"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "uplink"
+
+[[bin]]
+name = "uplink-window"
+path = "src/room_window.rs"
+
+[dependencies]
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+sha2 = "0.10"
+windows = { version = "0.62.2", features = ["Win32_System_Com","Win32_UI_Shell","Win32_UI_Shell_Common"] }
+serde = { version = "1", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png","jpeg","webp"] }
+base64 = "0.23"
+uuid = { version = "1", features = ["v4"] }
+clipboard-win = "5.4"
+serde_json = "1"
+tempfile = "3"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation","Win32_NetworkManagement_IpHelper","Win32_System_IO", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Security","Win32_Security_Cryptography", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_HiDpi", "Win32_UI_Controls","Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["image"] }
+
+[profile.dev]
+debug = 0
+
+[profile.perf]
+inherits = "release"
+debug = false
+
+[dependencies.slint]
+version = "1"
+default-features = false
+features = ["std","compat-1-2","backend-winit","renderer-software","accessibility","unstable-winit-030"]
+
+[build-dependencies]
+rspolib = "0.1.2"
+winresource = "0.1"
+slint-build = "1"
+
+[dev-dependencies]
+quircs = "0.10"
+
+
+[[bin]]
+name = "uplinkctl"
+path = "src/cli.rs"

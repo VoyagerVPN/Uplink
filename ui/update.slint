@@ -1,0 +1,135 @@
+import { Label, HintCard, Action, ButtonFocus } from "controls.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export enum UpdatePhase { idle, checking, current, found, loading, verifying, ready, restarting, updated, offline, invalid, install-failed }
+export struct ReleaseNote { text: string, heading: bool, bullet: bool }
+export global UpdateUi {
+    in-out property <UpdatePhase> phase;
+    in-out property <string> version;
+    in-out property <string> target;
+    in-out property <[ReleaseNote]> notes;
+    in-out property <int> percent;
+    in-out property <bool> dialog-open;
+    in-out property <bool> channel-available;
+    callback check();
+    callback download();
+    callback install();
+    out property <bool> readable: phase == UpdatePhase.found || phase == UpdatePhase.loading || phase == UpdatePhase.verifying || phase == UpdatePhase.ready;
+    out property <bool> busy: phase == UpdatePhase.checking || phase == UpdatePhase.verifying || phase == UpdatePhase.restarting;
+    out property <bool> failed: phase == UpdatePhase.invalid || phase == UpdatePhase.offline || phase == UpdatePhase.install-failed;
+    out property <string> title: readable ? @tr("What’s new in {}", target) : @tr("Uplink updates");
+    out property <string> hint: phase == UpdatePhase.found ? @tr("Download Uplink {}", target)
+        : phase == UpdatePhase.ready ? @tr("Update {}: notes and installation", target)
+        : phase == UpdatePhase.loading ? @tr("Downloading Uplink {} · {}%", target, percent)
+        : phase == UpdatePhase.checking ? @tr("Checking for updates…")
+        : phase == UpdatePhase.verifying ? @tr("Verifying package…")
+        : phase == UpdatePhase.restarting ? @tr("Restarting Uplink…")
+        : phase == UpdatePhase.install-failed ? @tr("Installation failed. Check for updates")
+        : phase == UpdatePhase.invalid ? (target == "" ? @tr("Invalid release. Check again") : @tr("Verification failed. Download again"))
+        : @tr("Offline. Check again");
+    public function act() {
+        if phase == UpdatePhase.ready { dialog-open = true; }
+        else if phase == UpdatePhase.invalid && target == "" { check(); }
+        else if phase == UpdatePhase.found || phase == UpdatePhase.invalid { download(); }
+        else if phase == UpdatePhase.offline || phase == UpdatePhase.install-failed { check(); }
+    }
+}
+
+component Ring inherits Rectangle {
+    width: 18px; height: 18px;
+    property <bool> partial: UpdateUi.busy || UpdateUi.phase == UpdatePhase.loading;
+    property <color> ink: UpdateUi.failed ? #e4a398 : UpdateUi.busy ? #a0a4aa : #bfec70;
+    property <float> downloaded: clamp(UpdateUi.percent, 0, 100) / 100;
+    animate downloaded { duration: 200ms; easing: linear; }
+    property <float> fraction: UpdateUi.busy ? 0.25 : downloaded;
+    property <angle> start-angle: UpdateUi.busy ? mod(animation-tick() / 1ms, 1400) / 1400 * 360deg : 0deg;
+    property <angle> end-angle: start-angle + fraction * 360deg;
+    rim := Rectangle { width: 16.5px; height: self.width; border-radius: self.width / 2; border-width: 1.5px; border-color: root.ink;
+        opacity: root.partial && root.fraction < 1 ? 0.3 : 1; }
+    if root.partial && root.fraction > 0 && root.fraction < 1: Path {
+        width: 18px; height: 18px; viewbox-width: 18; viewbox-height: 18;
+        stroke: root.ink; stroke-width: rim.border-width;
+        MoveTo { x: 9 + 7.5 * sin(root.start-angle); y: 9 - 7.5 * cos(root.start-angle); }
+        ArcTo { radius-x: 7.5; radius-y: 7.5; sweep: true; large-arc: root.fraction > 0.5;
+            x: 9 + 7.5 * sin(root.end-angle); y: 9 - 7.5 * cos(root.end-angle); }
+    }
+    if !root.partial: Path {
+        width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+        stroke: root.ink; stroke-width: 1.5px;
+        MoveTo { x: 12; y: root.failed-symbol ? 7 : 7.5; }
+        LineTo { x: 12; y: root.failed-symbol ? 13 : 15.5; }
+    }
+    property <bool> failed-symbol: UpdateUi.failed;
+    if UpdateUi.failed: Rectangle { x: 8.25px; y: 11.4px; width: 1.5px; height: 1.5px; border-radius: self.width / 2; background: root.ink; }
+    if UpdateUi.phase == UpdatePhase.found: Path { width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
+        commands: "M8.7 12.3l3.3 3.3 3.3-3.3"; stroke: root.ink; stroke-width: 1.5px; }
+}
+
+export component UpdateHeader inherits HorizontalLayout {
+    horizontal-stretch: 0; spacing: 2px;
+    property <bool> simple: UpdateUi.phase == UpdatePhase.idle || UpdateUi.phase == UpdatePhase.current || UpdateUi.phase == UpdatePhase.updated;
+    version := ButtonFocus {
+        width: word.preferred-width; accessible-role: button;
+        accessible-label: UpdateUi.readable ? UpdateUi.title : UpdateUi.phase == UpdatePhase.current ? @tr("Up to date. Check again") :
+            UpdateUi.phase == UpdatePhase.updated ? @tr("Update installed. Check again") : @tr("Check for updates");
+        enabled: root.simple || UpdateUi.readable;
+        function activate() { if UpdateUi.readable { UpdateUi.dialog-open = true; } else if root.simple { UpdateUi.check(); } }
+        accessible-action-default => { self.activate(); }
+        key-pressed(e) => { if e.text == Key.Return || e.text == Key.Space { self.activate(); return accept; } return reject; }
+        word := Label { text: "v" + UpdateUi.version; font-size: 11px; letter-spacing: 0.45px; color: hit.has-hover || version.show-focus ? #eff0f2 : #90959c; }
+        hit := TouchArea { mouse-cursor: pointer; clicked => {version.focus-from-pointer(); version.activate();} }
+        Tooltip { HintCard { message: version.accessible-label; } }
+    }
+    Rectangle { width: 24px;
+        if !root.simple: Rectangle {
+            height: 28px;
+            if UpdateUi.busy || UpdateUi.phase == UpdatePhase.loading: Rectangle {
+                Ring {}
+                accessible-role: image; accessible-label: UpdateUi.hint;
+                Tooltip { HintCard { message: UpdateUi.hint; } }
+            }
+            if !UpdateUi.busy && UpdateUi.phase != UpdatePhase.loading: Action {
+                width: 24px; height: 28px; icon-only: true; caption: UpdateUi.hint;
+                if UpdateUi.phase == UpdatePhase.ready: Image { width: 18px; height: 18px; source: @image-url("../assets/icon/install-update.svg"); }
+                if UpdateUi.phase != UpdatePhase.ready: Ring {}
+                invoked => { UpdateUi.act(); }
+            }
+        }
+    }
+}
+
+export component UpdateDialog inherits FocusScope {
+    accessible-role: groupbox;
+    accessible-label: UpdateUi.title;
+    init => { self.focus(); }
+    key-pressed(e) => { if e.text == Key.Escape { UpdateUi.dialog-open = false; return accept; } return reject; }
+    Rectangle { background: #090b0dad; TouchArea { clicked => { UpdateUi.dialog-open = false; } } }
+    Rectangle {
+        width: 340px; height: content.preferred-height; border-radius: 10px; border-color: #383b40; border-width: 1px; background: #202225;
+        TouchArea {}
+        content := VerticalLayout { padding: 18px; spacing: 16px;
+            HorizontalLayout { height: 28px; spacing: 8px;
+                Label { text: UpdateUi.title; font-size: 19px; font-weight: 600; horizontal-stretch: 1; }
+                Action { width: 28px; height: 28px; title-button: true; caption: "×"; accessible-label: @tr("Close"); invoked => { UpdateUi.dialog-open = false; } }
+            }
+            if !UpdateUi.readable: Label { text: UpdateUi.hint; height: 28px; color: #b9bdc3; }
+            if UpdateUi.readable: ScrollView {
+                height: min(260px, items.preferred-height);
+                items := VerticalLayout { spacing: 8px;
+                    for note in UpdateUi.notes: HorizontalLayout { spacing: 6px;
+                        if note.bullet: Label { width: 10px; text: "•"; color: #92999f; vertical-alignment: top; }
+                        Text { horizontal-stretch: 1; text: note.text; wrap: word-wrap; font-size: 13px; font-weight: note.heading ? 600 : 400; color: note.heading ? #eff0f2 : #d0d3d7; }
+                    }
+                }
+            }
+            if UpdateUi.readable: HorizontalLayout { height: 32px; alignment: end;
+                Action { primary: true; height: 32px;
+                    available: UpdateUi.phase == UpdatePhase.ready || UpdateUi.phase == UpdatePhase.found;
+                    caption: UpdateUi.phase == UpdatePhase.ready ? @tr("Install and restart") : UpdateUi.phase == UpdatePhase.found ? @tr("Download update") :
+                        UpdateUi.phase == UpdatePhase.loading ? @tr("Downloading…") : @tr("Verifying package…");
+                    invoked => { UpdateUi.dialog-open = false; if UpdateUi.phase == UpdatePhase.ready { UpdateUi.install(); } else { UpdateUi.download(); } }
+                }
+            }
+        }
+    }
+}

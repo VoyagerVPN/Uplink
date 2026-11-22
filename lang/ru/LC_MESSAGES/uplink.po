@@ -1,0 +1,676 @@
+msgid ""
+msgstr ""
+"Language: ru\n"
+"X-Display-Name: Русский\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Undo"
+msgstr "Отменить"
+
+msgid "Redo"
+msgstr "Повторить"
+
+msgid "Cut"
+msgstr "Вырезать"
+
+msgid "Copy"
+msgstr "Копировать"
+
+msgid "Paste"
+msgstr "Вставить"
+
+msgid "Select all"
+msgstr "Выделить всё"
+
+msgid "Clear link"
+msgstr "Очистить ссылку"
+
+msgid "No data"
+msgstr "Нет данных"
+
+msgid "Ping"
+msgstr "Пинг"
+
+msgid "Sort by ping"
+msgstr "Сортировать по пингу"
+
+msgid "Sort by name"
+msgstr "Сортировать по имени"
+
+msgid "Descending"
+msgstr "По убыванию"
+
+msgid "Ascending"
+msgstr "По возрастанию"
+
+msgid "Copy IP for {}: {}"
+msgstr "Скопировать IP {}: {}"
+
+msgid "Network creator"
+msgstr "Создатель сети"
+
+msgid "Uplink is off"
+msgstr "Uplink отключён"
+
+msgid "Network adapter unavailable"
+msgstr "Сетевой адаптер недоступен"
+
+msgid "Server connection is unstable"
+msgstr "Связь с сервером нестабильна"
+
+msgid "Uplink is on"
+msgstr "Uplink включён"
+
+msgid "Back to home"
+msgstr "На главный экран"
+
+msgid "Settings"
+msgstr "Настройки"
+
+msgid "Minimize"
+msgstr "Свернуть"
+
+msgid "Close to tray"
+msgstr "Закрыть в трей"
+
+msgid "Nickname"
+msgstr "Ник"
+
+msgid "Edit nickname"
+msgstr "Изменить ник"
+
+msgid "Turn off Uplink"
+msgstr "Выключить Uplink"
+
+msgid "Turn on Uplink"
+msgstr "Включить Uplink"
+
+msgid "Back"
+msgstr "Назад"
+
+msgid "Launch at sign-in"
+msgstr "Автозапуск"
+
+msgid "Start in the tray when you sign in to Windows"
+msgstr "Запускать в трее при входе в Windows"
+
+msgid "Auto-connect"
+msgstr "Автоподключение"
+
+msgid "Restore connections at startup"
+msgstr "Восстанавливать соединения при запуске"
+
+msgid "Automatic updates"
+msgstr "Автообновления"
+
+msgid "Update channel is not connected yet"
+msgstr "Канал обновлений пока не подключён"
+
+msgid "My networks"
+msgstr "Мои сети"
+
+msgid "Networks"
+msgstr "Сети"
+
+msgid "Network name"
+msgstr "Название сети"
+
+msgid "Rename network"
+msgstr "Переименовать сеть"
+
+msgid "Link copied"
+msgstr "Ссылка скопирована"
+
+msgid "Copy failed"
+msgstr "Ошибка копирования"
+
+msgid "Invite"
+msgstr "Пригласить"
+
+msgid "Leave"
+msgstr "Покинуть"
+
+msgid "Members"
+msgstr "Участники"
+
+msgid "IP address"
+msgstr "IP-адрес"
+
+msgid "Your ping to the server"
+msgstr "Ваш пинг до сервера"
+
+msgid "Ping to {}"
+msgstr "Пинг до {}"
+
+msgid "Network"
+msgstr "Сеть"
+
+msgid "Invitation link"
+msgstr "Ссылка-приглашение"
+
+msgid "Join"
+msgstr "Присоединиться"
+
+msgid "{} ms"
+msgstr "{} мс"
+
+msgid "Language"
+msgstr "Язык"
+
+msgctxt "native"
+msgid "Open Uplink"
+msgstr "Открыть Uplink"
+
+msgctxt "native"
+msgid "Icon: green"
+msgstr "Значок: зелёный"
+
+msgctxt "native"
+msgid "Icon: ping"
+msgstr "Значок: пинг"
+
+msgctxt "native"
+msgid "Icon: Windows theme"
+msgstr "Значок: по теме Windows"
+
+msgctxt "native"
+msgid "Quit Uplink"
+msgstr "Выйти из Uplink"
+
+msgctxt "native"
+msgid "Cannot open Uplink."
+msgstr "Не удалось открыть Uplink."
+
+msgctxt "native"
+msgid "Uplink is not running"
+msgstr "Uplink не запущен"
+
+msgctxt "native"
+msgid "Unknown invitation"
+msgstr "Неизвестное приглашение"
+
+msgctxt "native"
+msgid "Could not update the tray icon"
+msgstr "Не удалось обновить значок трея"
+
+msgctxt "native"
+msgid "The window did not reach the requested state"
+msgstr "Окно не перешло в запрошенное состояние"
+
+msgctxt "native"
+msgid "You are not a member of a network"
+msgstr "Вы не состоите в сети"
+
+msgctxt "native"
+msgid "Cannot find uplink.exe for startup"
+msgstr "Не найден uplink.exe для автозапуска"
+
+msgctxt "native"
+msgid "Settings directory unavailable"
+msgstr "Каталог настроек недоступен"
+
+msgctxt "native"
+msgid "Invalid network list"
+msgstr "Некорректный список сетей"
+
+msgctxt "native"
+msgid "Unknown network in profile"
+msgstr "Неизвестная сеть в профиле"
+
+msgctxt "native"
+msgid "You have left this network"
+msgstr "Вы вышли из этой сети"
+
+msgctxt "native"
+msgid "Unknown setting"
+msgstr "Неизвестная настройка"
+
+msgctxt "native"
+msgid "Supported states: ok, warning, critical"
+msgstr "Допустимые состояния: ok, warning, critical"
+
+msgctxt "native"
+msgid "Enter between 1 and 32 visible characters"
+msgstr "Введите от 1 до 32 видимых символов"
+
+msgctxt "native"
+msgid "The selected network has changed"
+msgstr "Выбранная сеть изменилась"
+
+msgctxt "native"
+msgid "Only the network creator can change its name"
+msgstr "Название может менять только создатель сети"
+
+msgctxt "native"
+msgid "Icon mode: green, ping or system"
+msgstr "Режим значка: green, ping или system"
+
+msgctxt "native"
+msgid "No settings directory"
+msgstr "Нет каталога настроек"
+
+msgctxt "native"
+msgid "Invalid settings"
+msgstr "Некорректные настройки"
+
+msgctxt "native"
+msgid "Unsupported language"
+msgstr "Язык не поддерживается"
+
+msgctxt "native"
+msgid "Member"
+msgstr "Участник"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Join network"
+msgstr "Присоединиться"
+
+msgid "Paste an invitation link"
+msgstr "Вставьте ссылку-приглашение"
+msgid "Uplink settings"
+msgstr "Настройки Uplink"
+
+msgid "Administrator"
+msgstr "Администратор"
+
+
+msgid "Change"
+msgstr "Изменить"
+
+msgid "Change avatar"
+msgstr "Изменить аватар"
+
+msgid "Close"
+msgstr "Закрыть"
+
+msgid "Configure invitations"
+msgstr "Настроить приглашения"
+
+msgid "Edit avatar"
+msgstr "Редактирование аватара"
+
+msgid "Grant administrator role"
+msgstr "Назначить администратором"
+
+msgid "Hide password"
+msgstr "Скрыть пароль"
+
+msgid "Invitations"
+msgstr "Приглашения"
+
+msgid "Invitations are disabled"
+msgstr "Приглашения выключены"
+
+msgid "Invite to network"
+msgstr "Пригласить в сеть"
+
+msgid "Link"
+msgstr "Ссылка"
+
+msgid "Login"
+msgstr "Логин"
+
+msgid "Login and password"
+msgstr "Логин и пароль"
+
+msgid "More actions"
+msgstr "Другие действия"
+
+msgid "Network QR code"
+msgstr "QR-код приглашения"
+
+msgid "Network password"
+msgstr "Пароль сети"
+
+msgid "Network settings"
+msgstr "Настройки сети"
+
+msgid "Open invitations"
+msgstr "Открыть приглашения"
+
+msgid "Overview"
+msgstr "Обзор"
+
+msgid "Owner"
+msgstr "Владелец"
+
+msgid "Password"
+msgstr "Пароль"
+
+msgid "QR code"
+msgstr "QR-код"
+
+msgid "Remove from network"
+msgstr "Исключить из сети"
+
+msgid "Remove member?"
+msgstr "Исключить участника?"
+
+msgid "Remove {} from “{}”?"
+msgstr "Исключить {} из сети «{}»?"
+
+msgid "Replace photo"
+msgstr "Заменить фото"
+
+msgid "Revoke administrator role"
+msgstr "Снять роль администратора"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Scan to join"
+msgstr "Отсканируйте код, чтобы открыть приглашение."
+
+msgid "Show password"
+msgstr "Показать пароль"
+
+msgid "Transfer ownership"
+msgstr "Передать владение"
+
+msgid "Transfer ownership?"
+msgstr "Передать владение?"
+
+msgid "Zoom"
+msgstr "Масштаб"
+
+msgid "{} will own the network “{}”. You will remain a member."
+msgstr "{} получит права владельца сети «{}». Вы останетесь участником."
+
+msgctxt "native"
+msgid "Invalid network credentials"
+msgstr "Неверный логин или пароль сети"
+
+msgctxt "native"
+msgid "Network management permission required"
+msgstr "Недостаточно прав для управления сетью"
+
+msgctxt "native"
+msgid "Invalid network setting"
+msgstr "Недопустимое значение настройки"
+
+msgctxt "native"
+msgid "Participant is unavailable"
+msgstr "Участник недоступен"
+
+msgctxt "native"
+msgid "This invitation is disabled"
+msgstr "Этот способ приглашения выключен"
+
+msgctxt "native"
+msgid "Select an image"
+msgstr "Выберите изображение"
+
+msgctxt "native"
+msgid "Image is too large"
+msgstr "Изображение слишком большое"
+
+msgctxt "native"
+msgid "Unsupported image"
+msgstr "Не удалось открыть изображение"
+
+msgid "Transfer"
+msgstr "Передать"
+
+msgid "Remove"
+msgstr "Исключить"
+
+msgid "Server"
+msgstr "Сервер"
+
+msgid "Name and password"
+msgstr "Имя и пароль"
+
+msgid "Change password"
+msgstr "Изменить пароль"
+
+msgctxt "native"
+msgid "Network name already in use"
+msgstr "На этом сервере уже есть сеть с таким именем"
+
+msgctxt "native"
+msgid "Enter a server address"
+msgstr "Введите адрес сервера"
+
+msgctxt "native"
+msgid "Enter between 1 and 64 visible characters"
+msgstr "Введите от 1 до 64 видимых символов"
+
+msgctxt "native"
+msgid "Too many login attempts"
+msgstr "Слишком много попыток входа. Повторите через минуту."
+
+msgctxt "native"
+msgid "Run the Uplink transport installer to verify this device"
+msgstr "Запустите установщик транспорта Uplink для подтверждения устройства"
+
+msgid "Uplink Setup"
+msgstr "Установка Uplink"
+
+msgid "Uplink removed"
+msgstr "Uplink удалён"
+
+msgid "Uplink is ready"
+msgstr "Uplink готов"
+
+msgid "Remove Uplink?"
+msgstr "Удалить Uplink?"
+
+msgid "Update Uplink"
+msgstr "Обновить Uplink"
+
+msgid "Install Uplink"
+msgstr "Установить Uplink"
+
+msgid "Your networks and settings are kept."
+msgstr "Ваши сети и настройки сохранятся."
+
+msgid "Version {}"
+msgstr "Версия {}"
+
+msgid "Setup could not finish"
+msgstr "Не удалось завершить установку"
+
+msgid "Installation folder"
+msgstr "Папка установки"
+
+msgid "Please wait…"
+msgstr "Подождите…"
+
+msgid "Done"
+msgstr "Готово"
+
+msgid "Retry"
+msgstr "Повторить"
+
+msgid "Update"
+msgstr "Обновить"
+
+msgid "Install"
+msgstr "Установить"
+
+msgctxt "native"
+msgid "Another application owns the invitation links."
+msgstr "Ссылки-приглашения зарегистрированы другим приложением."
+
+
+msgctxt "native"
+msgid "Another setup is running."
+msgstr "Уже запущен другой установщик."
+
+
+msgid "Open Uplink"
+msgstr "Открыть Uplink"
+
+msgid "Uninstall"
+msgstr "Удалить"
+
+msgid "Transport is ready"
+msgstr "Транспорт настроен"
+
+msgid "Network transport"
+msgstr "Сетевой транспорт"
+
+msgid "Connect ZeroTier to your Uplink server."
+msgstr "Подключите ZeroTier к своему серверу Uplink."
+
+msgid "Open the invitation in Uplink to join."
+msgstr "Откройте приглашение в Uplink, чтобы войти в сеть."
+
+msgid "Set up transport"
+msgstr "Настроить транспорт"
+
+msgid "Connect"
+msgstr "Подключить"
+
+msgctxt "native"
+msgid "Administrator approval is required for network setup."
+msgstr "Для настройки транспорта подтвердите запрос Windows."
+
+msgctxt "native"
+msgid "Use the same Windows account for administrator approval."
+msgstr "Подтвердите запрос под той же учётной записью Windows."
+
+msgctxt "native"
+msgid "Paste an invitation from your Uplink server."
+msgstr "Вставьте ссылку-приглашение своего сервера Uplink."
+
+msgctxt "native"
+msgid "Check the invitation, server and installed ZeroTier root."
+msgstr "Проверьте ссылку, доступность сервера и корень ZeroTier."
+
+msgid "Choose installation folder"
+msgstr "Выбрать папку установки"
+
+msgctxt "native"
+msgid "Could not open the folder picker."
+msgstr "Не удалось открыть выбор папки."
+
+msgid "Reinstall Uplink"
+msgstr "Переустановить Uplink"
+
+msgid "Reinstall"
+msgstr "Переустановить"
+
+
+
+msgid "Roll back Uplink"
+msgstr "Откатить Uplink"
+
+msgid "Roll back"
+msgstr "Откатить"
+
+msgid "Close Uplink?"
+msgstr "Закрыть Uplink?"
+
+msgid "Close and continue"
+msgstr "Закрыть и продолжить"
+
+msgid "Uplink is running. Close it to continue."
+msgstr "Чтобы продолжить, нужно закрыть приложение."
+
+msgid "Local data removed."
+msgstr "Локальные данные удалены."
+
+msgid "Your networks and settings were kept."
+msgstr "Ваши сети и настройки сохранены."
+
+
+msgid "Delete local data and saved networks"
+msgstr "Удалить настройки и сохранённые сети"
+
+msgid "Uninstall ZeroTier"
+msgstr "Удалить ZeroTier"
+
+msgid "Could not finish"
+msgstr "Не удалось завершить операцию"
+
+msgctxt "native"
+msgid "Uplink files are in use."
+msgstr "Файлы Uplink заняты другим процессом."
+
+msgctxt "native"
+msgid "Could not clean up Uplink data or ZeroTier."
+msgstr "Не удалось удалить данные Uplink или ZeroTier."
+
+msgctxt "native"
+msgid "Check access to the installation folder."
+msgstr "Проверьте доступ к папке установки."
+
+msgctxt "native"
+msgid "Network setup was not completed."
+msgstr "Настройка сети не завершена."
+
+msgctxt "native"
+msgid "Restart Windows to finish removing ZeroTier."
+msgstr "Перезагрузите Windows для завершения удаления ZeroTier."
+
+msgid "What’s new in {}"
+msgstr "Что нового в {}"
+
+msgid "Uplink updates"
+msgstr "Обновления Uplink"
+
+msgid "Download Uplink {}"
+msgstr "Скачать Uplink {}"
+
+msgid "Update {}: notes and installation"
+msgstr "Обновление {}: изменения и установка"
+
+msgid "Downloading Uplink {} · {}%"
+msgstr "Загрузка Uplink {} · {}%"
+
+msgid "Checking for updates…"
+msgstr "Проверяем обновления…"
+
+msgid "Verifying package…"
+msgstr "Проверяем пакет…"
+
+msgid "Restarting Uplink…"
+msgstr "Перезапуск Uplink…"
+
+msgid "Verification failed. Download again"
+msgstr "Ошибка проверки. Скачать заново"
+
+msgid "Offline. Check again"
+msgstr "Нет связи. Проверить снова"
+
+msgid "Up to date. Check again"
+msgstr "Установлена последняя версия. Проверить снова"
+
+msgid "Update installed. Check again"
+msgstr "Обновление установлено. Проверить снова"
+
+msgid "Check for updates"
+msgstr "Проверить обновления"
+
+msgid "Install and restart"
+msgstr "Установить и перезапустить"
+
+msgid "Download update"
+msgstr "Скачать обновление"
+
+msgid "Downloading…"
+msgstr "Скачивание…"
+
+msgid "Download new versions in the background"
+msgstr "Скачивать новые версии в фоне"
+
+msgctxt "native"
+msgid "Click the version to check for updates."
+msgstr "Версию можно нажать, чтобы проверить обновления."
+
+msgctxt "native"
+msgid "A ring next to the version shows download progress."
+msgstr "Ход загрузки виден в кольце рядом с версией."
+
+msgctxt "native"
+msgid "Once the download finishes, you choose when to restart."
+msgstr "После загрузки вы сами выбираете момент перезапуска."
+
+msgid "Invalid release. Check again"
+msgstr "Не удалось проверить выпуск. Проверить снова"
+
+msgid "Installation failed. Check for updates"
+msgstr "Установка не удалась. Проверить обновления"

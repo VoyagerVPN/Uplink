@@ -1,0 +1,107 @@
+diff --git a/osdep/WindowsEthernetTap.cpp b/osdep/WindowsEthernetTap.cpp
+index 546af9d..66b4a5f 100644
+--- a/osdep/WindowsEthernetTap.cpp
++++ b/osdep/WindowsEthernetTap.cpp
+@@ -39,11 +39,13 @@
+ #include <ws2ipdef.h>
+ #include <ws2tcpip.h>
+ 
++#pragma comment(lib, "setupapi.lib")
++#pragma comment(lib, "newdev.lib")
++
+ // Create a fake unused default route to force detection of network type on networks without gateways
+ #define ZT_WINDOWS_CREATE_FAKE_DEFAULT_ROUTE
+ 
+ // Function signatures of dynamically loaded functions, from newdev.h, setupapi.h, and cfgmgr32.h
+-typedef BOOL(WINAPI* UpdateDriverForPlugAndPlayDevicesA_t)(_In_opt_ HWND hwndParent, _In_ LPCSTR HardwareId, _In_ LPCSTR FullInfPath, _In_ DWORD InstallFlags, _Out_opt_ PBOOL bRebootRequired);
+ typedef BOOL(WINAPI* SetupDiGetINFClassA_t)(_In_ PCSTR InfName, _Out_ LPGUID ClassGuid, _Out_writes_(ClassNameSize) PSTR ClassName, _In_ DWORD ClassNameSize, _Out_opt_ PDWORD RequiredSize);
+ typedef HDEVINFO(WINAPI* SetupDiCreateDeviceInfoList_t)(_In_opt_ CONST GUID* ClassGuid, _In_opt_ HWND hwndParent);
+ typedef BOOL(WINAPI* SetupDiCreateDeviceInfoA_t)(
+@@ -142,16 +144,6 @@ class WindowsEthernetTapEnv {
+ 			_exit(1);
+ 		}
+ 
+-		newDevMod = LoadLibraryA("newdev.dll");
+-		if (! newDevMod) {
+-			fprintf(stderr, "FATAL: unable to dynamically load newdev.dll\r\n");
+-			_exit(1);
+-		}
+-		if (! (this->UpdateDriverForPlugAndPlayDevicesA = (UpdateDriverForPlugAndPlayDevicesA_t)GetProcAddress(newDevMod, "UpdateDriverForPlugAndPlayDevicesA"))) {
+-			fprintf(stderr, "FATAL: UpdateDriverForPlugAndPlayDevicesA not found in newdev.dll\r\n");
+-			_exit(1);
+-		}
+-
+ 		cfgMgrMod = LoadLibraryA("cfgmgr32.dll");
+ 		if (! cfgMgrMod) {
+ 			fprintf(stderr, "FATAL: unable to dynamically load cfgmgr32.dll\r\n");
+@@ -167,7 +159,6 @@ class WindowsEthernetTapEnv {
+ 	std::string tapDriverPath;
+ 	std::string tapDriverName;
+ 
+-	UpdateDriverForPlugAndPlayDevicesA_t UpdateDriverForPlugAndPlayDevicesA;
+ 
+ 	SetupDiGetINFClassA_t SetupDiGetINFClassA;
+ 	SetupDiCreateDeviceInfoList_t SetupDiCreateDeviceInfoList;
+@@ -185,7 +176,6 @@ class WindowsEthernetTapEnv {
+ 
+   private:
+ 	HMODULE setupApiMod;
+-	HMODULE newDevMod;
+ 	HMODULE cfgMgrMod;
+ };
+ static const WindowsEthernetTapEnv WINENV;
+@@ -208,6 +198,9 @@ std::string WindowsEthernetTap::addNewPersistentTapDevice(const char* pathToInf,
+ 		return std::string("SetupDiGetINFClassA() failed -- unable to read zttap driver INF file");
+ 	}
+ 
++	if (! SetupCopyOEMInfA(pathToInf, nullptr, SPOST_PATH, 0, nullptr, 0, nullptr, nullptr))
++		return std::string("Unable to stage TAP INF: ") + std::to_string(GetLastError());
++
+ 	HDEVINFO deviceInfoSet = WINENV.SetupDiCreateDeviceInfoList(&classGuid, (HWND)0);
+ 	if (deviceInfoSet == INVALID_HANDLE_VALUE) {
+ 		return std::string("SetupDiCreateDeviceInfoList() failed");
+@@ -221,7 +214,8 @@ std::string WindowsEthernetTap::addNewPersistentTapDevice(const char* pathToInf,
+ 		return std::string("SetupDiCreateDeviceInfoA() failed");
+ 	}
+ 
+-	if (! WINENV.SetupDiSetDeviceRegistryPropertyA(deviceInfoSet, &deviceInfoData, SPDRP_HARDWAREID, (const BYTE*)WINENV.tapDriverName.c_str(), (DWORD)(WINENV.tapDriverName.length() + 1))) {
++	const std::string hardwareIds = WINENV.tapDriverName + char(0);
++	if (! WINENV.SetupDiSetDeviceRegistryPropertyA(deviceInfoSet, &deviceInfoData, SPDRP_HARDWAREID, (const BYTE*)hardwareIds.c_str(), (DWORD)(hardwareIds.size() + 1))) {
+ 		WINENV.SetupDiDestroyDeviceInfoList(deviceInfoSet);
+ 		return std::string("SetupDiSetDeviceRegistryPropertyA() failed");
+ 	}
+@@ -231,21 +225,20 @@ std::string WindowsEthernetTap::addNewPersistentTapDevice(const char* pathToInf,
+ 		return std::string("SetupDiCallClassInstaller(DIF_REGISTERDEVICE) failed");
+ 	}
+ 
+-	// HACK: During upgrades, this can fail while the installer is still running. So make 60 attempts
+-	// with a 1s delay between each attempt.
+-	bool driverInstalled = false;
+-	for (int retryCounter = 0; retryCounter < 60; ++retryCounter) {
+-		BOOL rebootRequired = FALSE;
+-		if (WINENV.UpdateDriverForPlugAndPlayDevicesA((HWND)0, WINENV.tapDriverName.c_str(), pathToInf, INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE, &rebootRequired)) {
+-			driverInstalled = true;
+-			break;
+-		}
+-		else
+-			Sleep(1000);
+-	}
+-	if (! driverInstalled) {
++	// Windows выбирает совместимый драйвер из Driver Store для этого экземпляра.
++	BOOL reboot = FALSE;
++	const BOOL installed = DiInstallDevice(nullptr, deviceInfoSet, &deviceInfoData, nullptr, 0, &reboot);
++	if (! installed || reboot) {
++		const DWORD error = installed ? ERROR_SUCCESS_REBOOT_REQUIRED : GetLastError();
++		// Убираем только новое устройство, если установка не завершилась.
++		SP_REMOVEDEVICE_PARAMS remove = {};
++		remove.ClassInstallHeader.cbSize = sizeof(SP_CLASSINSTALL_HEADER);
++		remove.ClassInstallHeader.InstallFunction = DIF_REMOVE;
++		remove.Scope = DI_REMOVEDEVICE_GLOBAL;
++		if (SetupDiSetClassInstallParamsA(deviceInfoSet, &deviceInfoData, &remove.ClassInstallHeader, sizeof(remove)))
++			WINENV.SetupDiCallClassInstaller(DIF_REMOVE, deviceInfoSet, &deviceInfoData);
+ 		WINENV.SetupDiDestroyDeviceInfoList(deviceInfoSet);
+-		return std::string("UpdateDriverForPlugAndPlayDevices() failed (made 60 attempts)");
++		return std::string("Unable to install TAP driver on new device: ") + std::to_string(error);
+ 	}
+ 
+ 	char iidbuf[1024];

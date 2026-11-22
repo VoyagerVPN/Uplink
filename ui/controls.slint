@@ -1,0 +1,141 @@
+import { ButtonStyle } from "button-style.slint";
+import { TextField } from "text-field.slint";
+
+export component Label inherits Text {
+    color: #eff0f2;
+    font-size: 13px;
+    vertical-alignment: center;
+    overflow: elide;
+}
+export component HintCard inherits Rectangle {
+    in property <string> message;
+    background: #303338; border-radius: 6px;
+    border-color: #494e54; border-width: 1px;
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; padding-top: 6px; padding-bottom: 6px;
+        Text { text: root.message; color: #eff0f2; font-size: 12px; }
+    }
+}
+export component ButtonFocus inherits FocusScope {
+    private property <bool> pointer-focused;
+    out property <bool> show-focus: self.has-focus && !self.pointer-focused;
+    public function focus-from-pointer() {
+        self.focus();
+        self.pointer-focused = true;
+    }
+    changed has-focus => { if !self.has-focus { self.pointer-focused = false; } }
+}
+
+export component Action inherits Rectangle {
+    in property <string> caption;
+    in property <bool> available:true;
+    accessible-enabled:root.available;
+    opacity:root.available?1:0.55;
+    private property <bool> hide-tip;
+    private property <bool> hovered:touch.has-hover;
+    changed hovered=>{if !root.hovered{root.hide-tip=false;}}
+    in property <length> caption-inset: 0px;
+    in property <bool> filled;
+    in property <bool> borderless-focus;
+    in property <bool> selected;
+    in property <bool> title-button;
+    in property <bool> icon-only;
+    in property <image> glyph;
+    in property <length> glyph-size: 16px;
+    in property <color> glyph-color: transparent;
+    callback invoked();
+    accessible-role: button;
+    accessible-label: caption;
+    accessible-action-default => {if root.available{root.invoked();}}
+    width: word.preferred-width + 22px + (leading-icon?20px:0px);
+    horizontal-stretch: 0;
+    height: 30px;
+    border-radius: 6px;
+    background: primary && danger ? (touch.has-hover ? #ff9a91 : #ed8178) : primary?(touch.has-hover?#cef685:#bfec70):borderless-focus?transparent:touch.has-hover ? ButtonStyle.hover-background : (filled ? #25272b : transparent);
+    border-width: borderless-focus ? 0px : 1px;
+    border-color: keys.show-focus ? #8c929a : transparent;
+    in property <bool> leading-icon;
+    in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> align-start;
+    if leading-icon:Image{x:10px;width:15px;height:15px;source:root.glyph;colorize:root.primary?#263415:#c8cdd3;}
+    in property <angle> glyph-rotation;
+    if icon-only: Image { width: root.glyph-size; height: root.glyph-size; image-fit: contain; source: root.glyph; transform-rotation: root.glyph-rotation; opacity: touch.pressed ? 0.7 : 1; colorize: root.glyph-color; }
+    word := Label {
+        visible: !root.icon-only; text: root.caption;
+        x: root.leading-icon?20px:root.align-start?10px:root.caption-inset;
+        width: root.width - self.x - (root.caption-inset > 0px ? 26px : 0px);
+        horizontal-alignment: root.caption-inset > 0px || root.align-start ? left : center;
+        color: root.danger && root.primary ? #341010 : root.danger?#f2a099:root.primary?#263415:root.selected ? #bfec70 : touch.has-hover ? #ffffff : #e1e3e6;
+        font-size: root.title-button ? 19px : 12px;
+    }
+    if icon-only && !root.hide-tip: Tooltip { HintCard { message: root.caption; } }
+    keys := ButtonFocus {
+        enabled:root.available;
+        key-pressed(event) => { if event.text == Key.Return || event.text == " " { root.invoked(); return accept; } return reject; }
+    }
+    touch := TouchArea {
+        enabled:root.available;
+        mouse-cursor: pointer;
+        pointer-event(event) => { if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { keys.focus-from-pointer(); } }
+        clicked => {root.hide-tip=true;root.invoked();}
+    }
+}
+export component EditableTitle inherits Rectangle {
+    in property <string> value;
+    in property <string> field-name;
+    in property <string> action-label;
+    in property <bool> editable: true;
+    in property <bool> show-pencil;
+    in property <length> type-size: 16px;
+    in-out property <bool> editing;
+    callback changed-mode();
+    callback save(string);
+    height: 32px;
+    function begin-edit() {
+        if root.editable {
+            root.changed-mode();
+            root.editing = true;
+            field.start(root.value);
+        }
+    }
+    if !root.editing: Rectangle {
+        name := Label {
+            x: 0px; width: min(self.preferred-width, parent.width - (root.editable ? 28px : 0px));
+            height: parent.height; horizontal-alignment: left;
+            text: root.value; font-size: root.type-size; font-weight: 600;
+            name-hover := TouchArea { x: 0px; width: name.width; }
+        }
+        if root.editable: pencil := ButtonFocus {
+            x: name.width; width: 28px; height: parent.height;
+            accessible-role: button; accessible-label: root.action-label + " " + root.value;
+            accessible-action-default => { root.begin-edit(); }
+            key-pressed(event) => {
+                if event.text == Key.Return || event.text == " " { root.begin-edit(); return accept; }
+                return reject;
+            }
+            if pencil.show-focus: Rectangle {
+                border-radius: 6px; border-width: 1px; border-color: #8c929a;
+                background: pencil-hover.has-hover ? transparent : ButtonStyle.hover-background;
+            }
+            Image {
+                visible: root.show-pencil || name-hover.has-hover || pencil-hover.has-hover || pencil.show-focus;
+                width: 15px; height: 15px; source: @image-url("../assets/icon/pencil.svg");
+            }
+            pencil-hover := TouchArea {
+                mouse-cursor: pointer;
+                pointer-event(event) => { if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { pencil.focus-from-pointer(); } }
+                clicked => { root.begin-edit(); }
+            }
+            Tooltip { HintCard { message: root.action-label; } }
+        }
+    }
+    field := TextField {
+        x: -6px; width: parent.width + 6px;
+        visible: root.editing; inline: true; field-name: root.field-name; type-size: root.type-size;
+        submit(value) => { root.save(value); }
+        cancel => { root.editing = false; root.changed-mode(); }
+        blurred => { if root.editing { root.save(field.text); } }
+    }
+}
+

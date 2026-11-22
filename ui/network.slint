@@ -1,0 +1,199 @@
+import { Label, ButtonFocus, Action, EditableTitle, HintCard } from "controls.slint";
+import { TextField } from "text-field.slint";
+import { ListView } from "std-widgets.slint";
+
+export struct Person { name:string, ip:string, owner:bool, admin:bool, own:bool }
+export struct DropZone {x:float,y:float,w:float,h:float}
+export global NetworkUi {
+    in-out property <string> panel;
+    in-out property <string> modal;
+    in-out property <string> name;
+    in-out property <string> initials;
+    in-out property <string> server;
+    in-out property <string> link;
+    in-out property <bool> manages;
+    in-out property <bool> owner;
+    in-out property <[Person]> people;
+    in-out property <bool> link-on;
+    in-out property <bool> qr-on;
+    in-out property <bool> password-on;
+    in-out property <string> password;
+    in-out property <string> method;
+    in-out property <image> qr-image;
+    in-out property <image> avatar;
+    in-out property <bool> has-avatar;
+    in-out property <bool> dragging-file;
+    in-out property <DropZone> drop-bounds;
+    in-out property <image> preview;
+    in-out property <float> zoom: 1;
+    in-out property <string> target;
+    in-out property <string> target-name;
+    in-out property <string> error;
+    in-out property <bool> credentials;
+    callback action(string,string);
+    callback clear-draft();
+    callback request-link();
+    callback clipboard(string)->bool;
+    callback pan(float,float);
+    callback scale(float);
+    in-out property <bool> live;
+    in-out property <bool> saving;
+    in-out property <bool> joining;
+    in-out property <int> password-revision;
+    in-out property <bool> setting-password;
+    changed panel => { if self.panel!="methods" {self.setting-password=false;} }
+    callback login(string,string,string);
+    public function open-invite() {
+        self.error="";
+        self.method=self.link-on?"link":self.qr-on?"qr":self.password-on?"password":"";
+        self.modal="invite";
+        self.request-link();
+    }
+    public function close-modal(){if self.modal=="crop" {self.clear-draft();} self.modal="";self.error="";self.target="";}
+}
+
+export component Tab inherits ButtonFocus {
+    in property <string> title;
+    in property <bool> selected;
+    callback choose();
+    height:28px; min-width:0px; preferred-width:0px; horizontal-stretch:1;
+    accessible-role:button; accessible-label:title; accessible-action-default=>{root.choose();}
+    key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {root.choose();return accept;}return reject;}
+    Rectangle {border-radius:6px;background:root.selected?#282e25:hit.has-hover?#383b40:transparent;
+        border-width:root.show-focus?1px:0px;border-color:#8c929a;
+        Label {text:root.title;font-size:12px;color:root.selected?#bfec70:#a7abb2;horizontal-alignment:center;}
+    }
+    hit:=TouchArea{mouse-cursor:pointer;clicked=>{root.focus-from-pointer();root.choose();}}
+}
+
+component MethodRow inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> code;
+    in property <bool> on;
+    height:38px;
+    Label{text:root.title;font-weight:600;}
+    Rectangle {width:40px;toggle:=ButtonFocus {
+        width:40px;height:24px;accessible-role:checkbox;accessible-label:root.title;accessible-checked:root.on;
+        accessible-action-default=>{NetworkUi.action(root.code,"");}
+        key-pressed(e)=>{if e.text==Key.Space || e.text==Key.Return {NetworkUi.action(root.code,"");return accept;}return reject;}
+        Rectangle {border-radius:5px;background:root.on?#bfec70:#34373b;border-width:1px;border-color:toggle.show-focus?#dedfe1:root.on?#bfec70:#575b60;
+            Rectangle{x:root.on?20px:4px;width:16px;height:16px;border-radius:3px;background:root.on?#253416:#c0c4ca;}
+        }
+        TouchArea{mouse-cursor:pointer;clicked=>{toggle.focus-from-pointer();NetworkUi.action(root.code,"");}}
+    }}
+}
+
+component RosterRow inherits HorizontalLayout {
+    in property <Person> person;
+    height:38px;spacing:2px;
+    HorizontalLayout{spacing:8px;
+        Label{text:root.person.name;font-weight:600;horizontal-stretch:0;}
+        if root.person.owner: Rectangle{width:14px;Image{width:14px;height:14px;source:@image-url("../assets/icon/crown.svg");accessible-role:image;accessible-label:@tr("Owner");}}
+        if !NetworkUi.owner && root.person.admin: Rectangle{width:14px;Image{width:14px;height:16px;source:@image-url("../assets/icon/admin.svg");accessible-role:image;accessible-label:@tr("Administrator");}}
+        Rectangle{horizontal-stretch:1;}
+    }
+    if NetworkUi.owner && !root.person.owner && !root.person.own: Rectangle{ width:28px;Action {
+        width:28px;height:28px;icon-only:true;glyph:root.person.admin?@image-url("../assets/icon/admin.svg"):@image-url("../assets/icon/shield.svg");
+        caption:root.person.admin?@tr("Revoke administrator role"):@tr("Grant administrator role");
+        invoked=>{NetworkUi.action("role",root.person.ip);}
+    }}
+    if !root.person.own && !root.person.owner && (NetworkUi.owner || !root.person.admin): Rectangle {
+        width:28px;
+        Action {width:28px;height:28px;icon-only:true;glyph:@image-url("../assets/icon/more.svg");caption:@tr("More actions");invoked=>{menu.show();}}
+        menu:=PopupWindow {
+            close-policy:close-on-click-outside;
+            x:parent.width - self.width;y:(parent.height+28px)/2+2px;width:165px;height:NetworkUi.owner?66px:36px;
+            Rectangle{background:#25272b;border-width:1px;border-color:#43474b;border-radius:6px;
+                VerticalLayout{padding:3px;
+                    if NetworkUi.owner: Action{width:parent.width;align-start:true;caption:@tr("Transfer ownership");invoked=>{root.confirm("transfer");menu.close();}}
+                    Action{width:parent.width;align-start:true;danger:true;caption:@tr("Remove from network");invoked=>{root.confirm("remove");menu.close();}}
+                }
+            }
+        }
+    }
+    function confirm(kind:string){NetworkUi.target=root.person.ip;NetworkUi.target-name=root.person.name;NetworkUi.error="";NetworkUi.modal=kind;}
+}
+
+export component NetworkPage inherits VerticalLayout {
+    in-out property <bool> editing;
+    padding-top:6px;spacing:12px;
+    HorizontalLayout {height:41px;spacing:8px;
+        Rectangle{width:28px;Action{width:28px;icon-only:true;glyph:@image-url("../assets/icon/back.svg");glyph-size:18px;caption:@tr("Back");invoked=>{NetworkUi.panel="";NetworkUi.error="";}}}
+        VerticalLayout {alignment:center;
+            if NetworkUi.panel!="general": Label{text:@tr("Network settings");height:16px;font-size:12px;color:#a7abb2;}
+            Label{text:NetworkUi.panel=="general"?@tr("Network settings"):NetworkUi.name;height:25px;font-size:19px;font-weight:600;}
+        }
+    }
+    HorizontalLayout{height:28px;spacing:2px;
+        Tab{title:@tr("Overview");selected:NetworkUi.panel=="general";choose=>{NetworkUi.panel="general";}}
+        Tab{title:@tr("Invitations");selected:NetworkUi.panel=="methods";choose=>{NetworkUi.panel="methods";}}
+        Tab{title:@tr("Members");selected:NetworkUi.panel=="people";choose=>{NetworkUi.panel="people";}}
+    }
+    if NetworkUi.panel=="general": Rectangle {
+        height:116px;border-radius:8px;background:#202225;
+        avatar-button:=ButtonFocus {
+            property <DropZone> bounds: {x:self.absolute-position.x/1px,y:self.absolute-position.y/1px,w:self.width/1px,h:self.height/1px};
+            init=>{NetworkUi.drop-bounds=self.bounds;}
+            changed bounds=>{NetworkUi.drop-bounds=self.bounds;}
+            x:16px;y:16px;width:64px;height:84px;accessible-role:button;accessible-label:@tr("Change avatar");
+            accessible-action-default=>{NetworkUi.action("pick","");}
+            key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {NetworkUi.action("pick","");return accept;}return reject;}
+            Rectangle {y:0px;height:64px;border-radius:14px;clip:true;background:#2d3526;
+                if !NetworkUi.has-avatar: Label{text:NetworkUi.initials;font-size:22px;font-weight:600;color:#bfec70;horizontal-alignment:center;}
+                if NetworkUi.has-avatar: Image{width:parent.width;height:parent.height;source:NetworkUi.avatar;image-fit:cover;}
+                if NetworkUi.dragging-file: Rectangle{background:#10121480;border-radius:14px;Label{text:"+";color:#bfec70;font-size:28px;horizontal-alignment:center;}}
+            }
+            if NetworkUi.dragging-file: Image{x:-4px;y:-4px;width:72px;height:72px;source:@image-url("../assets/icon/drop-outline.svg");}
+            Label{y:68px;height:16px;width:parent.width;text:@tr("Change");font-size:12px;color:hit.has-hover || avatar-button.show-focus?#eff0f2:#a7abb2;horizontal-alignment:center;}
+            hit:=TouchArea{mouse-cursor:pointer;clicked=>{avatar-button.focus-from-pointer();NetworkUi.action("pick","");}}
+        }
+        VerticalLayout {x:94px;width:parent.width - 110px;alignment:center;
+            EditableTitle{value:NetworkUi.name;type-size:18px;show-pencil:true;field-name:@tr("Network name");action-label:@tr("Rename network");editing<=>root.editing;save(s)=>{NetworkUi.action("name",s);}}
+            Label {height:16px;text:NetworkUi.server;color:#a7abb2;font-size:12px;}
+        }
+    }
+    if NetworkUi.panel=="methods": Rectangle {
+        height:(NetworkUi.password-on || NetworkUi.setting-password)?183px:122px;border-radius:8px;background:#202225;
+        VerticalLayout{padding-left:12px;padding-right:12px;padding-top:4px;alignment:start;
+            MethodRow{title:@tr("Link");code:"link";on:NetworkUi.link-on;}
+            MethodRow{title:@tr("QR code");code:"qr";on:NetworkUi.qr-on;}
+            MethodRow{title:@tr("Name and password");code:"password-mode";on:NetworkUi.password-on || NetworkUi.setting-password;}
+            if NetworkUi.password-on || NetworkUi.setting-password: VerticalLayout {padding-left:12px;spacing:4px;
+                Label{height:17px;text:NetworkUi.live && NetworkUi.password-on?@tr("Change password"):@tr("Network password");color:#a7abb2;font-size:12px;}
+                HorizontalLayout{height:32px;spacing:6px;
+                    Rectangle{horizontal-stretch:1;
+                        property <bool> revealed;
+                        property <int> revision:NetworkUi.password-revision;
+                        changed revision => {pass.text="";self.revealed=false;}
+                        pass:=TextField{text:NetworkUi.password;secret:!parent.revealed;trailing:26px;field-name:@tr("Network password");submit(s)=>{NetworkUi.action("password",s);}}
+                        Action{x:parent.width - 30px;width:28px;height:28px;glyph:parent.revealed?@image-url("../assets/icon/eye-off.svg"):@image-url("../assets/icon/eye.svg");icon-only:true;borderless-focus:true;caption:parent.revealed?@tr("Hide password"):@tr("Show password");invoked=>{parent.revealed=!parent.revealed;}}
+                    }
+                    Action{caption:@tr("Save");available:!NetworkUi.saving && pass.text!="" && pass.text!=NetworkUi.password;filled:true;invoked=>{NetworkUi.action("password",pass.text);}}
+                }
+            }
+        }
+    }
+    if NetworkUi.panel=="methods": HorizontalLayout {height:32px;alignment:end;Action{caption:@tr("Open invitations");invoked=>{NetworkUi.open-invite();}}}
+    if NetworkUi.panel=="people": Rectangle {height:min(350px,NetworkUi.people.length*38px+8px);border-radius:8px;background:#202225;
+        ListView{x:12px;y:4px;width:parent.width - 24px;height:parent.height - 8px;for p in NetworkUi.people:RosterRow{person:p;}}
+    }
+    if NetworkUi.error!="":Label{text:NetworkUi.error;color:#e99087;height:28px;font-size:12px;}
+    Rectangle{}
+}
+
+export component JoinMode inherits HorizontalLayout {
+    height:30px;spacing:3px;alignment:start;
+    Tab{width:65px;title:@tr("Link");selected:!NetworkUi.credentials;choose=>{NetworkUi.credentials=false;}}
+    Tab{width:140px;title:@tr("Name and password");selected:NetworkUi.credentials;choose=>{NetworkUi.credentials=true;}}
+}
+export component Credentials inherits VerticalLayout {
+    height:216px;spacing:4px;
+    Label{text:@tr("Server");height:16px;color:#a7abb2;font-size:12px;}
+    host:=TextField{text:NetworkUi.server;field-name:@tr("Server");submit(s)=>{login.focus();}}
+    Label{text:@tr("Network name");height:16px;color:#a7abb2;font-size:12px;}
+    login:=TextField{field-name:@tr("Network name");submit(s)=>{pass.focus();}}
+    Rectangle{height:2px;}
+    Label{text:@tr("Password");height:16px;color:#a7abb2;font-size:12px;}
+    pass:=TextField{field-name:@tr("Password");secret:true;submit(s)=>{NetworkUi.login(host.text,login.text,s);}}
+    HorizontalLayout{height:32px;alignment:start;Action{caption:@tr("Join");available:!NetworkUi.joining && host.text!="" && login.text!="" && pass.text!="";filled:true;invoked=>{NetworkUi.login(host.text,login.text,pass.text);}}}
+}

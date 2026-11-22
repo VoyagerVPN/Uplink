@@ -1,0 +1,368 @@
+use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+use slint::platform::{
+    self, Clipboard, Key, Platform, PointerEventButton, WindowAdapter, WindowEvent,
+};
+use slint::{ComponentHandle, LogicalPosition, PhysicalSize};
+use std::{cell::RefCell, rc::Rc};
+
+slint::include_modules!();
+
+struct Desktop(Rc<MinimalSoftwareWindow>);
+impl Platform for Desktop {
+    fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+        Ok(self.0.clone())
+    }
+    fn clipboard_text(&self, _: Clipboard) -> Option<String> {
+        Some("uplink://join/after-hours".into())
+    }
+}
+
+fn open() -> (RoomWindow, Rc<MinimalSoftwareWindow>) {
+    let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    platform::set_platform(Box::new(Desktop(surface.clone()))).unwrap();
+    let ui = RoomWindow::new().unwrap();
+    ui.set_nickname("Ranazy".into());
+    ui.show().unwrap();
+    surface.set_size(PhysicalSize::new(388, 540));
+    ui.window()
+        .dispatch_event(WindowEvent::WindowActiveChanged(true));
+    (ui, surface)
+}
+
+fn click(ui: &RoomWindow, x: f32, y: f32) {
+    let position = LogicalPosition::new(x, y);
+    let button = PointerEventButton::Left;
+    ui.window()
+        .dispatch_event(WindowEvent::PointerPressed { position, button });
+    ui.window()
+        .dispatch_event(WindowEvent::PointerReleased { position, button });
+    platform::update_timers_and_animations();
+}
+
+fn key(ui: &RoomWindow, text: impl Into<slint::SharedString>) {
+    let text = text.into();
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text });
+}
+
+#[test]
+fn open_language_list_allows_the_first_click_on_settings_and_switches() {
+    let (ui, _) = open();
+    ui.set_settings_open(true);
+    ui.set_languages(slint::ModelRc::new(slint::VecModel::from(vec![
+        LanguageChoice {
+            code: "en".into(),
+            name: "English".into(),
+        },
+        LanguageChoice {
+            code: "ru".into(),
+            name: "Русский".into(),
+        },
+    ])));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let record = events.clone();
+    ui.on_change_option(move |key, _| record.borrow_mut().push(key.to_string()));
+    click(&ui, 292., 318.);
+    click(&ui, 332., 133.);
+    assert_eq!(*events.borrow(), ["autostart"]);
+    click(&ui, 292., 318.);
+    click(&ui, 281., 28.);
+    assert!(!ui.get_settings_open());
+}
+
+#[test]
+fn saved_networks_can_be_switched_from_the_main_screen() {
+    let (ui, _) = open();
+    ui.set_joined(true);
+    ui.set_invite_url("uplink://join/after-hours".into());
+    ui.set_rooms(slint::ModelRc::new(slint::VecModel::from(vec![
+        SavedRoom {
+            name: "After hours".into(),
+            url: ui.get_invite_url(),
+            ..Default::default()
+        },
+        SavedRoom {
+            name: "Co-op".into(),
+            url: "uplink://coop.example/rooms/coop".into(),
+            ..Default::default()
+        },
+    ])));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let record = selections.clone();
+    ui.on_select_room(move |url| record.borrow_mut().push(url.to_string()));
+    click(&ui, 37., 174.);
+    assert_eq!(*selections.borrow(), ["uplink://coop.example/rooms/coop"]);
+    let submitted = Rc::new(RefCell::new(String::new()));
+    let result = submitted.clone();
+    ui.on_join_room(move |url| *result.borrow_mut() = url.to_string());
+    click(&ui, 37., 214.);
+    assert!(ui.get_adding_network());
+    key(&ui, "uplink://coop.example/rooms/coop");
+    key(&ui, Key::Return);
+    assert_eq!(
+        submitted.borrow().as_str(),
+        "uplink://coop.example/rooms/coop"
+    );
+    key(&ui, Key::Escape);
+    assert!(!ui.get_adding_network());
+}
+
+#[test]
+fn russian_paste_in_invitation_input() {
+    let (ui, _) = open();
+    let submitted = Rc::new(RefCell::new(String::new()));
+    let result = submitted.clone();
+    ui.on_join_room(move |url| *result.borrow_mut() = url.to_string());
+    click(&ui, 56., 211.);
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    key(&ui, "м");
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    key(&ui, Key::Return);
+    assert_eq!(submitted.borrow().as_str(), "uplink://join/after-hours");
+}
+
+#[test]
+fn only_the_pencil_starts_editing_at_the_end_of_the_nickname() {
+    let (ui, surface) = open();
+    let weak = ui.as_weak();
+    ui.on_rename(move |nick| {
+        let ui = weak.unwrap();
+        ui.set_nickname(nick);
+        ui.set_editing(false);
+    });
+    let pencil_pixels = || {
+        let mut buffer = vec![slint::Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|r| {
+            r.render(&mut buffer, 388);
+        });
+        (68..85)
+            .flat_map(|y| (93..115).map(move |x| y * 388 + x))
+            .filter(|&index| buffer[index].r > 100)
+            .count()
+    };
+    let idle = pencil_pixels();
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(56., 77.),
+    });
+    assert!(
+        pencil_pixels() > idle + 5,
+        "Наведение должно показать карандаш"
+    );
+    click(&ui, 56., 77.);
+    assert!(!ui.get_editing());
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(103., 77.),
+    });
+    click(&ui, 103., 77.);
+    assert!(ui.get_editing());
+    key(&ui, "Черновик");
+    key(&ui, Key::Escape);
+    assert!(!ui.get_editing());
+    assert_eq!(ui.get_nickname(), "Ranazy");
+
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(56., 77.),
+    });
+    click(&ui, 56., 77.);
+    assert!(!ui.get_editing());
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(103., 77.),
+    });
+    click(&ui, 103., 77.);
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    key(&ui, "М");
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    key(&ui, Key::Return);
+    assert_eq!(ui.get_nickname(), "Ranazyuplink://join/after-hours");
+    assert!(!ui.get_editing());
+}
+
+#[test]
+fn clicking_outside_commits_once_and_preserves_the_clicked_control() {
+    let (ui, _) = open();
+    let saved = Rc::new(RefCell::new(Vec::new()));
+    let saves = saved.clone();
+    let weak = ui.as_weak();
+    ui.on_rename(move |name| {
+        saves.borrow_mut().push(name.to_string());
+        let ui = weak.unwrap();
+        ui.set_nickname(name);
+        ui.set_editing(false);
+    });
+    let joined = Rc::new(RefCell::new(Vec::new()));
+    let joins = joined.clone();
+    ui.on_join_room(move |link| joins.borrow_mut().push(link.to_string()));
+
+    click(&ui, 103., 77.);
+    key(&ui, "1");
+    click(&ui, 360., 402.);
+    assert_eq!(*saved.borrow(), ["Ranazy1"]);
+    assert!(!ui.get_editing());
+    key(&ui, "X");
+    assert_eq!(ui.get_nickname(), "Ranazy1");
+
+    click(&ui, 108., 77.);
+    key(&ui, "2");
+    click(&ui, 56., 211.);
+    assert!(!ui.get_editing());
+    key(&ui, "abc");
+    key(&ui, Key::Return);
+    assert_eq!(*joined.borrow(), ["abc"]);
+
+    click(&ui, 115., 77.);
+    key(&ui, "3");
+    click(&ui, 352., 211.);
+    assert!(!ui.get_editing());
+    assert_eq!(*saved.borrow(), ["Ranazy1", "Ranazy12", "Ranazy123"]);
+    assert_eq!(*joined.borrow(), ["abc", "abc"]);
+}
+
+#[test]
+fn clicking_room_content_or_title_commits_the_nickname() {
+    let (ui, _) = open();
+    ui.set_joined(true);
+    ui.set_members(slint::ModelRc::new(slint::VecModel::from(vec![
+        Member {
+            nick: "Ranazy".into(),
+            own: true,
+            ..Default::default()
+        },
+        Member {
+            nick: "Mira".into(),
+            creator: true,
+            ..Default::default()
+        },
+    ])));
+    let weak = ui.as_weak();
+    ui.on_rename(move |name| {
+        let ui = weak.unwrap();
+        ui.set_nickname(name);
+        ui.set_editing(false);
+    });
+    for (x, y) in [(55., 290.), (68., 29.), (40., 109.)] {
+        ui.set_nickname("Ranazy".into());
+        click(&ui, 103., 77.);
+        assert!(ui.get_editing());
+        key(&ui, "1");
+        click(&ui, x, y);
+        assert_eq!(ui.get_nickname(), "Ranazy1", "click at {x}, {y}");
+        assert!(!ui.get_editing());
+    }
+}
+
+#[test]
+fn only_creator_can_edit_room_title_and_click_away_to_save() {
+    let (ui, _) = open();
+    ui.set_joined(true);
+    ui.set_room_name("LAN".into());
+    let net = ui.global::<NetworkUi>();
+    net.set_name("LAN".into());
+    let weak = ui.as_weak();
+    net.on_action(move |action, value| {
+        assert_eq!(action, "name");
+        let ui = weak.unwrap();
+        ui.global::<NetworkUi>().set_name(value.clone());
+        ui.set_room_name(value);
+        ui.set_editing_room(false);
+    });
+    click(&ui, 305., 132.);
+    assert_eq!(net.get_panel(), "");
+    ui.set_is_creator(true);
+    click(&ui, 305., 132.);
+    assert_eq!(net.get_panel(), "general");
+    platform::update_timers_and_animations();
+    let bounds = net.get_drop_bounds();
+    assert_eq!(
+        (bounds.h, bounds.w, bounds.x, bounds.y),
+        (84., 64., 36., 169.)
+    );
+    click(&ui, 164., 200.);
+    assert!(ui.get_editing_room());
+    key(&ui, "2");
+    key(&ui, Key::Escape);
+    assert_eq!(ui.get_room_name(), "LAN");
+    click(&ui, 164., 200.);
+    key(&ui, "3");
+    click(&ui, 350., 465.);
+    assert_eq!(ui.get_room_name(), "LAN3");
+    assert!(!ui.get_editing_room());
+}
+
+#[test]
+fn transferring_from_more_requires_confirmation_and_targets_the_selected_member() {
+    let (ui, _) = open();
+    let net = ui.global::<NetworkUi>();
+    net.set_owner(true);
+    net.set_manages(true);
+    net.set_name("After hours".into());
+    net.set_panel("people".into());
+    net.set_people(slint::ModelRc::new(slint::VecModel::from(vec![
+        Person {
+            name: "Ranazy".into(),
+            own: true,
+            owner: true,
+            ..Default::default()
+        },
+        Person {
+            name: "Mira".into(),
+            ip: "192.0.2.10".into(),
+            ..Default::default()
+        },
+    ])));
+    let called = Rc::new(RefCell::new(Vec::new()));
+    let record = called.clone();
+    net.on_action(move |k, v| record.borrow_mut().push((k.to_string(), v.to_string())));
+    click(&ui, 342., 213.);
+    click(&ui, 270., 247.);
+    assert_eq!(net.get_modal(), "transfer");
+    assert_eq!(net.get_target(), "192.0.2.10");
+    assert!(called.borrow().is_empty());
+}
+
+#[test]
+fn credentials_submit_server_name_and_secret_from_the_native_form() {
+    let (ui, _) = open();
+    let net = ui.global::<NetworkUi>();
+    net.set_credentials(true);
+    let args = Rc::new(RefCell::new(Vec::new()));
+    let sent = args.clone();
+    net.on_login(move |server, name, password| {
+        *sent.borrow_mut() = vec![server.to_string(), name.to_string(), password.to_string()];
+    });
+    click(&ui, 100., 213.);
+    key(&ui, "after-hours.example");
+    key(&ui, Key::Return);
+    key(&ui, "После работы");
+    key(&ui, Key::Return);
+    key(&ui, "ui-fixture");
+    key(&ui, Key::Return);
+    assert_eq!(
+        args.borrow().as_slice(),
+        ["after-hours.example", "После работы", "ui-fixture"]
+    );
+}
+
+#[test]
+fn version_opens_release_notes_without_starting_download() {
+    let (ui, _surface) = open();
+    let update = ui.global::<UpdateUi>();
+    update.set_version("0.1.0".into());
+    update.set_target("0.1.1".into());
+    update.set_phase(UpdatePhase::Found);
+    click(&ui, 120., 29.);
+    assert!(update.get_dialog_open());
+    assert_eq!(update.get_phase(), UpdatePhase::Found);
+    key(&ui, Key::Escape);
+    assert!(!update.get_dialog_open());
+}

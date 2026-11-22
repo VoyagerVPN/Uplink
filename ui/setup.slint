@@ -1,0 +1,76 @@
+import { Label, Action } from "controls.slint";
+import { CheckBox } from "std-widgets.slint";
+import "../assets/fonts/Inter-Regular.ttf";
+import "../assets/fonts/Inter-SemiBold.ttf";
+
+export component SetupWindow inherits Window {
+    title: @tr("Uplink Setup");
+    icon: @image-url("../assets/icon/uplink.png");
+    no-frame: true;
+    min-width: 388px; max-width: 388px;
+    min-height: 252px; max-height: 252px;
+    default-font-family: "Inter"; background: #151618;
+    in property <bool> removing;
+    in property <string> mode;
+    in-out property <bool> purge;
+    in property <bool> has-zerotier;
+    in-out property <bool> remove-zerotier;
+    in-out property <bool> confirm-close;
+    callback choose-folder();
+    in-out property <bool> busy;
+    in-out property <bool> done;
+    in-out property <string> failure;
+    in property <string> version;
+    in property <string> destination;
+    callback proceed();
+    callback dismiss();
+    callback launch();
+    VerticalLayout {
+        padding: 16px; spacing: 10px;
+        HorizontalLayout {
+            height: 30px;
+            WindowMoveArea {
+                HorizontalLayout { spacing: 8px; alignment: start;
+                    Image {width: 22px; source: @image-url("../assets/icon/uplink.png"); image-fit: contain;}
+                    Label { text: "Uplink"; font-size: 16px; font-weight: 600; }
+                }
+            }
+            Action { width: 30px; title-button: true; caption: "×"; accessible-label: @tr("Close"); available: !root.busy; invoked => {root.dismiss();} }
+        }
+        VerticalLayout {
+            spacing: 4px;
+            Label { height: 28px; font-size: 21px; font-weight: 600;
+                text: root.confirm-close ? @tr("Close Uplink?") : root.done ? (root.removing ? @tr("Uplink removed") : @tr("Uplink is ready")) :
+                      root.removing ? @tr("Remove Uplink?") : root.mode == "update" ? @tr("Update Uplink") : root.mode == "reinstall" ? @tr("Reinstall Uplink") : root.mode == "downgrade" ? @tr("Roll back Uplink") : @tr("Install Uplink"); }
+            if !root.removing || root.done || root.confirm-close: Label { height: 20px; color: #a7abb2;
+                text: root.confirm-close ? @tr("Uplink is running. Close it to continue.") : root.removing ? 
+                    (root.purge ? @tr("Local data removed.") : @tr("Your networks and settings were kept.")) : @tr("Version {}", root.version); }
+        }
+        if root.removing && !root.done && !root.confirm-close && root.failure == "": VerticalLayout { spacing: 2px; alignment: center;
+            CheckBox { text: @tr("Delete local data and saved networks"); checked <=> root.purge; enabled: !root.busy; }
+            if root.has-zerotier: CheckBox { text: @tr("Uninstall ZeroTier"); checked <=> root.remove-zerotier; enabled: !root.busy; }
+        }
+        if root.failure != "" || (!root.removing && !root.confirm-close): Rectangle { border-radius: 8px; background: #202225;
+            HorizontalLayout { padding-left: 12px; padding-right: 8px; spacing: 6px;
+                VerticalLayout { alignment: center; spacing: 3px; horizontal-stretch: 1;
+                    Label { height: 17px; text: root.failure != "" ? @tr("Could not finish") : @tr("Installation folder"); font-weight: 600; }
+                    Text { text: root.failure != "" ? root.failure : root.destination;
+                        color: root.failure != "" ? #e99087 : #a7abb2; font-size: 12px; wrap: word-wrap; overflow: elide; }
+                }
+                if !root.removing && !root.done: VerticalLayout {alignment: center;
+                    Action { width:32px; height:32px; icon-only:true; glyph-size:18px; glyph:@image-url("../assets/icon/folder.svg");
+                        caption:@tr("Choose installation folder"); available: !root.busy; invoked => {root.choose-folder();} }
+                }
+            }
+        }
+        if root.confirm-close || (root.removing && root.done): Rectangle {vertical-stretch:1;}
+        HorizontalLayout { height: 32px; spacing: 8px; alignment: end;
+            if !root.done: Action {caption: @tr("Cancel"); available: !root.busy; invoked => { if root.confirm-close {root.confirm-close=false;} else {root.dismiss();} }}
+            Action {primary: true; danger: root.removing && !root.done && !root.confirm-close; available: !root.busy;
+                caption: root.busy ? @tr("Please wait…") : root.confirm-close ? @tr("Close and continue") : root.done ? (root.removing ? @tr("Done") : @tr("Open Uplink")) :
+                         root.failure != "" ? @tr("Retry") : root.removing ? @tr("Uninstall") : root.mode == "update" ? @tr("Update") : root.mode == "reinstall" ? @tr("Reinstall") : root.mode == "downgrade" ? @tr("Roll back") : @tr("Install");
+                invoked => { if root.done { if root.removing {root.dismiss();} else {root.launch();} } else {root.proceed();} }
+            }
+        }
+    }
+}

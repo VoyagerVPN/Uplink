@@ -1,0 +1,104 @@
+import { ButtonStyle } from "button-style.slint";
+export component TextField inherits Rectangle {
+    in property <bool> inline;
+    in property <bool> secret;
+    in property <bool> readonly;
+    in property <length> trailing: 0px;
+    in property <length> type-size: inline ? 16px : 13px;
+    in property <string> hint;
+    in property <string> field-name;
+    in-out property <string> text <=> editor.text;
+    callback submit(string);
+    callback cancel();
+    callback blurred();
+    public function start(value: string) {
+        editor.text = value;
+        editor.focus();
+        editor.select-all();
+        editor.clear-selection();
+    }
+    forward-focus: editor;
+    horizontal-stretch: 1;
+    height: 32px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: editor.has-focus ? #62676d : #34373b;
+    background: inline ? #191b1e : #202225;
+
+    property <bool> show-clear: !inline && !readonly && trailing == 0px && editor.has-focus && text != "";
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { editor.focus(); }
+        }
+    }
+    viewport := Rectangle {
+        x: root.inline ? 6px : 12px;
+        width: parent.width - 2 * self.x - (root.show-clear ? 20px : root.trailing);
+        clip: true;
+        if editor.text == "" && editor.preedit-text == "": Text {
+            x: 0px; width: parent.width; horizontal-alignment: left; text: root.hint; color: #a7abb2; font-size: 13px;
+            vertical-alignment: center; accessible-role: none;
+        }
+        ContextMenuArea {
+            Menu {
+                MenuItem { title: @tr("Undo"); activated => { editor.undo(); } }
+                MenuItem { title: @tr("Redo"); activated => { editor.redo(); } }
+                MenuSeparator {}
+                MenuItem { title: @tr("Cut"); enabled: editor.has-selection; activated => { editor.cut(); } }
+                MenuItem { title: @tr("Copy"); enabled: editor.has-selection; activated => { editor.copy(); } }
+                MenuItem { title: @tr("Paste"); activated => { editor.paste(); } }
+                MenuItem { title: @tr("Select all"); enabled: editor.text != ""; activated => { editor.select-all(); } }
+            }
+            editor := TextInput {
+                input-type: root.secret ? InputType.password : InputType.text;
+                read-only: root.readonly;
+                property <length> offset;
+                x: min(0px, max(parent.width - self.width, self.offset));
+                width: max(parent.width, self.preferred-width + self.text-cursor-width);
+                height: parent.height;
+                font-size: root.type-size;
+                font-weight: root.inline ? 600 : 400;
+                color: #eff0f2;
+                selection-background-color: #465638;
+                selection-foreground-color: #eff0f2;
+                vertical-alignment: center;
+                accessible-label: root.field-name;
+                accessible-placeholder-text: root.hint;
+                cursor-position-changed(pos) => {
+                    if pos.x + self.x < 0px { self.offset = -pos.x; }
+                    else if pos.x + self.x > parent.width - self.text-cursor-width {
+                        self.offset = parent.width - self.text-cursor-width - pos.x;
+                    }
+                }
+                changed has-focus => { if !self.has-focus { self.clear-selection(); root.blurred(); } }
+                key-pressed(event) => {
+                    if event.text == Key.Escape { root.cancel(); return accept; }
+                    if event.modifiers.control && !event.modifiers.alt && !event.modifiers.shift && !event.modifiers.meta {
+                        // В русской раскладке Slint передаёт букву, соответствующую клавише V.
+                        if event.text == "м" || event.text == "М" { self.paste(); return accept; }
+                        if event.text == "ф" || event.text == "Ф" { self.select-all(); return accept; }
+                        if event.text == "с" || event.text == "С" { self.copy(); return accept; }
+                        if event.text == "ч" || event.text == "Ч" { self.cut(); return accept; }
+                        if event.text == "я" || event.text == "Я" { self.undo(); return accept; }
+                        if event.text == "н" || event.text == "Н" { self.redo(); return accept; }
+                    }
+                    return reject;
+                }
+                accepted => { root.submit(self.text); }
+            }
+        }
+    }
+    if root.show-clear: Rectangle {
+        border-radius: 4px; background: clear-touch.has-hover ? ButtonStyle.hover-background : transparent;
+        x: parent.width - 29px; width: 24px; height: parent.height;
+        accessible-role: button;
+        accessible-label: @tr("Clear link");
+        accessible-action-default => { editor.text = ""; editor.focus(); }
+        Text {
+            text: "×"; color: #a7abb2; font-size: 16px;
+            vertical-alignment: center; horizontal-alignment: center;
+        }
+        clear-touch := TouchArea { mouse-cursor: pointer; clicked => { editor.text = ""; editor.focus(); } }
+    }
+}
+

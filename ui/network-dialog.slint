@@ -1,0 +1,86 @@
+import { NetworkUi, Tab } from "network.slint";
+import { Label, Action } from "controls.slint";
+import { TextField } from "text-field.slint";
+
+component CopyField inherits VerticalLayout {
+    in property <string> title;
+    in property <string> value;
+    height:52px;spacing:4px;
+    Label{text:root.title;height:16px;color:#a7abb2;font-size:12px;}
+    Rectangle {
+        HorizontalLayout{spacing:6px;
+        TextField{text:root.value;readonly:true;field-name:root.title;}
+        Action{available:root.value!="";width:32px;height:32px;filled:true;icon-only:true;glyph:receipt.running?@image-url("../assets/icon/check.svg"):@image-url("../assets/icon/copy.svg");caption:@tr("Copy");invoked=>{if NetworkUi.clipboard(root.value){receipt.restart();}}}
+        }
+        receipt:=Timer{interval:2000ms;running:false;triggered=>{self.stop();}}
+    }
+}
+export component NetworkDialog inherits FocusScope {
+    init=>{root.focus();}
+    key-pressed(e)=>{if e.text==Key.Escape{NetworkUi.close-modal();return accept;}return reject;}
+    Rectangle{background:#080a0bbd;TouchArea{clicked=>{NetworkUi.close-modal();}}}
+    card:=Rectangle {
+        width:NetworkUi.modal=="invite"?348px:NetworkUi.modal=="crop"?318px:325px;height:content.preferred-height;
+        background:#202225;border-radius:9px;border-color:#393c41;border-width:1px;
+        TouchArea{}
+        content:=VerticalLayout {
+            padding:17px;spacing:12px;
+            HorizontalLayout{height:NetworkUi.modal=="invite"?41px:28px;spacing:4px;
+                VerticalLayout{
+                    if NetworkUi.modal=="invite":Label{text:@tr("Invite to network");height:16px;font-size:12px;color:#a7abb2;}
+                    Label{text:NetworkUi.modal=="crop"?@tr("Edit avatar"):NetworkUi.modal=="transfer"?@tr("Transfer ownership?"):NetworkUi.modal=="remove"?@tr("Remove member?"):NetworkUi.name;font-size:19px;font-weight:600;}
+                }
+                Action{width:28px;caption:"×";accessible-label:@tr("Close");title-button:true;invoked=>{NetworkUi.close-modal();}}
+            }
+            if NetworkUi.modal=="invite": VerticalLayout {spacing:12px;
+                if (NetworkUi.link-on && NetworkUi.qr-on) || (NetworkUi.link-on && NetworkUi.password-on) || (NetworkUi.password-on && NetworkUi.qr-on):HorizontalLayout{height:28px;spacing:2px;
+                    if NetworkUi.link-on:Tab{title:@tr("Link");selected:NetworkUi.method=="link";choose=>{NetworkUi.method="link";}}
+                    if NetworkUi.qr-on:Tab{title:@tr("QR code");selected:NetworkUi.method=="qr";choose=>{NetworkUi.method="qr";}}
+                    if NetworkUi.password-on:Tab{title:@tr("Name and password");selected:NetworkUi.method=="password";choose=>{NetworkUi.method="password";}}
+                }
+                if NetworkUi.method=="link":CopyField{title:@tr("Invitation link");value:NetworkUi.link;}
+                if NetworkUi.method=="password":CopyField{title:@tr("Server");value:NetworkUi.server;}
+                if NetworkUi.method=="password":CopyField{title:@tr("Network name");value:NetworkUi.name;}
+                if NetworkUi.method=="password" && !NetworkUi.live:CopyField{title:@tr("Password");value:NetworkUi.password;}
+                if NetworkUi.method=="qr":Image{height:148px;source:NetworkUi.qr-image;image-fit:contain;image-rendering:pixelated;accessible-role:image;accessible-label:@tr("Network QR code");}
+                if NetworkUi.method=="qr":Label{text:@tr("Scan to join");horizontal-alignment:center;height:22px;}
+                if NetworkUi.method=="":Label{text:@tr("Invitations are disabled");height:32px;}
+                if NetworkUi.manages:HorizontalLayout{height:30px;alignment:end;Action{caption:@tr("Configure invitations");invoked=>{NetworkUi.close-modal();NetworkUi.panel="methods";}}}
+            }
+            if NetworkUi.modal=="crop": VerticalLayout {spacing:12px;
+                Rectangle {height:284px;background:#101114;border-radius:6px;clip:true;
+                    Image{width:parent.width;height:parent.height;source:NetworkUi.preview;image-fit:fill;}
+                    FocusScope{key-pressed(e)=>{if e.text==Key.LeftArrow{NetworkUi.pan(e.modifiers.shift?-21.6:-4.32,0);}else if e.text==Key.RightArrow{NetworkUi.pan(e.modifiers.shift?21.6:4.32,0);}else if e.text==Key.UpArrow{NetworkUi.pan(0,e.modifiers.shift?-21.6:-4.32);}else if e.text==Key.DownArrow{NetworkUi.pan(0,e.modifiers.shift?21.6:4.32);}else{return reject;}return accept;}
+                        drag:=TouchArea{mouse-cursor:grab;property <length> last-x;property <length> last-y;
+                            pointer-event(e)=>{if e.kind==PointerEventKind.down{parent.focus();self.last-x=self.mouse-x;self.last-y=self.mouse-y;}}
+                            moved=>{if self.pressed{NetworkUi.pan((self.mouse-x - self.last-x)/1px,(self.mouse-y - self.last-y)/1px);self.last-x=self.mouse-x;self.last-y=self.mouse-y;}}
+                        }
+                    }
+                }
+                HorizontalLayout{height:26px;spacing:12px;
+                    Label{text:@tr("Zoom");horizontal-stretch:0;font-size:12px;color:#a7abb2;}
+                    slider:=FocusScope{accessible-role:AccessibleRole.slider;accessible-label:@tr("Zoom");accessible-value:NetworkUi.zoom;accessible-action-increment=>{NetworkUi.scale(NetworkUi.zoom+0.05);}accessible-action-decrement=>{NetworkUi.scale(NetworkUi.zoom - 0.05);}
+                        key-pressed(e)=>{if e.text==Key.LeftArrow || e.text==Key.RightArrow{NetworkUi.scale(NetworkUi.zoom+(e.text==Key.LeftArrow?-0.05:0.05));return accept;}return reject;}
+                        Rectangle{height:4px;border-radius:2px;background:#707479;Rectangle{x:0px;width:knob.x+7px;background:#bfec70;border-radius:2px;}}
+                        knob:=Rectangle{x:(parent.width - 14px)*(NetworkUi.zoom - 1)/2;width:14px;height:14px;border-radius:4px;background:#bfec70;}
+                        TouchArea{mouse-cursor:pointer;pointer-event(e)=>{if e.kind==PointerEventKind.down{slider.focus();NetworkUi.scale(1+2*(self.mouse-x - 7px)/(self.width - 14px));}}
+                            moved=>{if self.pressed{NetworkUi.scale(1+2*(self.mouse-x - 7px)/(self.width - 14px));}}}
+                    }
+                }
+                HorizontalLayout{height:32px;
+                    Action{caption:@tr("Replace photo");leading-icon:true;glyph:@image-url("../assets/icon/replace.svg");filled:true;invoked=>{NetworkUi.action("pick","");}}
+                    Rectangle{}
+                    Action{caption:@tr("Save");leading-icon:true;glyph:@image-url("../assets/icon/check.svg");primary:true;invoked=>{NetworkUi.action("save-avatar","");}}
+                }
+            }
+            if NetworkUi.modal=="transfer" || NetworkUi.modal=="remove": VerticalLayout{spacing:12px;
+                Label{text:NetworkUi.modal=="transfer"?@tr("{} will own the network “{}”. You will remain a member.",NetworkUi.target-name,NetworkUi.name):@tr("Remove {} from “{}”?",NetworkUi.target-name,NetworkUi.name);wrap:word-wrap;}
+                HorizontalLayout{height:32px;alignment:end;spacing:4px;
+                    Action{caption:@tr("Cancel");invoked=>{NetworkUi.close-modal();}}
+                    Action{caption:NetworkUi.modal=="transfer"?@tr("Transfer"):@tr("Remove");danger:true;invoked=>{NetworkUi.action(NetworkUi.modal,NetworkUi.target);}}
+                }
+            }
+            if NetworkUi.error!="":Label{text:NetworkUi.error;height:32px;wrap:word-wrap;color:#e99087;font-size:12px;}
+        }
+    }
+}

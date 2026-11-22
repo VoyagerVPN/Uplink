@@ -1,0 +1,538 @@
+export { SetupWindow } from "setup.slint";
+import { UpdateUi, UpdateHeader, UpdateDialog } from "update.slint";
+export { UpdateUi, UpdatePhase, ReleaseNote } from "update.slint";
+import { NetworkUi, NetworkPage, JoinMode, Credentials } from "network.slint";
+import { NetworkDialog } from "network-dialog.slint";
+export { NetworkUi, Person } from "network.slint";
+import { Label, HintCard, ButtonFocus, Action, EditableTitle } from "controls.slint";
+import { ButtonStyle } from "button-style.slint";
+import { ListView } from "std-widgets.slint";
+import { TextField } from "text-field.slint";
+import "../assets/fonts/Inter-Regular.ttf";
+import "../assets/fonts/Inter-SemiBold.ttf";
+
+export struct SavedRoom { name: string, initials: string, url: string, server: string, avatar:image, has-avatar:bool }
+export struct LanguageChoice { code: string, name: string }
+export struct PingReading { bars: int, ms: int }
+export struct Member { nick: string, ip: string, creator: bool, admin: bool, own: bool, ping: PingReading }
+
+component PingIndicator inherits Rectangle {
+    in property <PingReading> reading;
+    in property <string> description;
+    property <string> latency: reading.bars > 0 ? @tr("{} ms", reading.ms) : "";
+    property <color> ink: reading.bars == 3 ? #bfec70 : reading.bars == 2 ? #e8bf74 : #e99087;
+    width: 70px;
+    accessible-role: image;
+    accessible-label: description + (reading.bars == 0 ? ". " + @tr("No data") : ". " + root.latency);
+    HorizontalLayout {
+        spacing: 6px;
+        glyph := Rectangle {
+            width: 14px;
+            for idx in 3: Rectangle {
+                width: 3px;
+                height: 4px + 3px * idx;
+                x: 5px * idx;
+                y: (glyph.height + 10px) / 2 - self.height;
+                border-radius: 1px;
+                background: idx < root.reading.bars ? root.ink : #52565c;
+            }
+        }
+        Label { text: root.latency; font-size: 12px; color: #b9bdc3; }
+    }
+    Tooltip { HintCard { message: root.description; } }
+}
+component JoinField inherits HorizontalLayout {
+    in property <bool> autofocus;
+    callback submit(string);
+    callback cancel();
+    height: 32px; spacing: 6px;
+    link := TextField {
+        hint: @tr("Paste an invitation link"); field-name: @tr("Invitation link");
+        init => { if root.autofocus { self.focus(); } }
+        submit(value) => { root.submit(value); }
+        cancel => { root.cancel(); }
+    }
+    Action {
+        width: 32px; height: 32px; icon-only: true; caption: @tr("Join");
+        glyph: @image-url("../assets/icon/join.svg"); glyph-size: 20px;
+        invoked => { root.submit(link.text); }
+    }
+}
+
+component CopyFeedback inherits Rectangle {
+    width: 0px; height: 0px;
+    out property <bool> active: expiry.running;
+    out property <bool> success;
+    property <duration> until;
+    public function clear() { expiry.stop(); }
+    public function show(ok: bool) {
+        success = ok;
+        until = animation-tick() + 2s;
+        expiry.interval = 2s;
+        expiry.start();
+    }
+    expiry := Timer {
+        running: false; interval: 2s;
+        triggered => {
+            if root.until > animation-tick() { self.interval = root.until - animation-tick(); }
+            else { self.stop(); }
+        }
+    }
+}
+
+component SortHeading inherits ButtonFocus {
+    in property <string> caption;
+    in property <bool> selected;
+    in property <bool> descending;
+    callback invoked();
+    accessible-role: button;
+    accessible-label: (caption == @tr("Ping") ? @tr("Sort by ping") : @tr("Sort by name")) + (selected ? (descending ? ", " + @tr("Descending") : ", " + @tr("Ascending")) : "");
+    accessible-action-default => { root.invoked(); }
+    key-pressed(event) => {
+        if event.text == Key.Return || event.text == " " { root.invoked(); return accept; }
+        return reject;
+    }
+    Rectangle {
+        border-radius: 5px;
+        background: root.show-focus && !touch.has-hover ? ButtonStyle.hover-background : transparent;
+        border-width: 1px; border-color: root.show-focus ? #8c929a : transparent;
+    }
+    Label {
+        x: 0px; width: parent.width; height: parent.height; horizontal-alignment: left;
+        text: root.caption + (root.selected ? (root.descending ? " ↓" : " ↑") : "");
+        font-size: 11px;
+        color: touch.has-hover ? #eff0f2 : #a7abb2;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(event) => { if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { root.focus-from-pointer(); } }
+        clicked => { root.invoked(); }
+    }
+}
+
+component CopyAddress inherits Rectangle {
+    in property <string> ip;
+
+    in property <string> owner;
+    callback copy() -> bool;
+    function perform-copy() { receipt.show(root.copy()); }
+    receipt := CopyFeedback { }
+    changed ip => { receipt.clear(); }
+    accessible-role: button;
+    accessible-label: @tr("Copy IP for {}: {}", owner, ip);
+    accessible-action-default => { root.perform-copy(); }
+    width: address.preferred-width + 30px;
+    height: 24px;
+    border-radius: 5px;
+    background: touch.has-hover ? ButtonStyle.hover-background : transparent;
+    border-width: 1px; border-color: keys.show-focus ? #8c929a : transparent;
+    HorizontalLayout {
+        padding-left: 5px; padding-right: 5px; spacing: 5px;
+        address := Label { text: root.ip; font-size: 12px; color: #c7cad0; horizontal-alignment: left; }
+        Rectangle { width: 15px;
+            Image { visible: receipt.active || touch.has-hover;
+                source: receipt.active ? (receipt.success ? @image-url("../assets/icon/check.svg") : @image-url("../assets/icon/copy-error.svg")) : @image-url("../assets/icon/copy.svg");
+            }
+        }
+    }
+    keys := ButtonFocus { key-pressed(event) => { if event.text == Key.Return || event.text == " " { root.perform-copy(); return accept; } return reject; } }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(event) => { if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { keys.focus-from-pointer(); } }
+        clicked => { root.perform-copy(); }
+    }
+}
+
+component Crown inherits Image {
+    width: 14px; height: 14px; source: @image-url("../assets/icon/crown.svg");
+    accessible-role: image; accessible-label: @tr("Network creator");
+    Tooltip { HintCard { message: @tr("Network creator"); } }
+}
+
+component PreferenceIcon inherits Rectangle {
+    in property <image> source;
+    width: 18px;
+    Image {
+        y: (parent.height - self.height) / 2; width: parent.width; height: self.width;
+        source: root.source; image-fit: contain;
+    }
+}
+
+component Preference inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> description;
+    in-out property <bool> checked;
+    callback toggle(bool);
+    height: 60px;
+    HorizontalLayout {
+        padding-left: 14px; padding-right: 14px; spacing: 12px;
+        PreferenceIcon { source: root.icon; }
+        VerticalLayout {
+            alignment: center; spacing: 3px;
+            Label { height: 18px; text: root.title; font-weight: 600; }
+            Label { height: 16px; text: root.description; font-size: 11px; color: #aaafb6; }
+        }
+        Rectangle {
+            width: 40px;
+            control := ButtonFocus {
+                y: (parent.height - self.height) / 2; width: parent.width; height: 24px;
+                accessible-role: switch; accessible-label: root.title;
+                accessible-checkable: true; accessible-checked: root.checked;
+                function activate() { root.toggle(!root.checked); }
+                accessible-action-default => { self.activate(); }
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == Key.Space { self.activate(); return accept; }
+                    return reject;
+                }
+                Rectangle {
+                    border-radius: 6px; border-width: 1px;
+                    background: root.checked ? (hit.has-hover ? #cdef90 : #bfec70) : (hit.has-hover ? #454950 : #35383e);
+                    border-color: control.show-focus ? #eff0f2 : (root.checked ? self.background : #585d64);
+                    Rectangle {
+                        x: root.checked ? 20px : 4px; y: 4px; width: 16px; height: 16px;
+                        border-radius: 3px; background: root.checked ? #263317 : #c1c5cc;
+                        animate x { duration: 90ms; }
+                    }
+                }
+                hit := TouchArea {
+                    mouse-cursor: pointer;
+                    pointer-event(event) => { if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { control.focus-from-pointer(); } }
+                    clicked => { control.activate(); }
+                }
+            }
+        }
+    }
+}
+
+export component RoomWindow inherits Window {
+    title: "Uplink"; no-frame: true;
+    icon: @image-url("../assets/icon/uplink.png");
+    min-width: 388px; max-width: 388px;
+    min-height: 540px; max-height: 540px;
+    background: #151618;
+    default-font-family: "Inter";
+    in-out property <string> nickname;
+    in-out property <bool> joined;
+    in property <[Member]> members;
+    in property <string> creator-ip;
+    in property <bool> by-ping;
+    in property <bool> descending;
+    callback sort-members(bool);
+    in-out property <bool> editing;
+    in-out property <string> error;
+    callback dismiss();
+    in property <bool> is-creator;
+    in-out property <bool> editing-room;
+    callback rename(string);
+    callback rename-room(string);
+    callback join-room(string);
+    callback leave-room();
+    in property <[SavedRoom]> rooms;
+    in-out property <bool> adding-network;
+    callback select-room(string);
+    changed power-on => { if !root.power-on {NetworkUi.close-modal();NetworkUi.panel="";root.adding-network = false; } }
+    callback copy(string) -> bool;
+    in property <string> invite-url;
+    in property <string> room-name;
+    in property <string> room-server;
+    in property <bool> power-on: true;
+    in property <string> health: "ok";
+    in-out property <bool> autostart;
+    in-out property <bool> autoconnect;
+    in-out property <bool> autoupdate;
+    in-out property <bool> settings-open;
+    in property <[LanguageChoice]> languages;
+    in property <string> language-code;
+    in property <string> language-name;
+    callback change-language(string);
+    private property <bool> language-open;
+    changed settings-open => { root.language-open = false; }
+    function set-preference(key: string, value: bool) {
+        root.language-open = false;
+        root.change-option(key, value);
+    }
+    callback change-option(string, bool);
+    property <string> status-text: !power-on ? @tr("Uplink is off") : health == "critical" ? @tr("Network adapter unavailable") : health == "warning" ? @tr("Server connection is unstable") : @tr("Uplink is on");
+    property <color> status-color: !power-on ? #91969f : health == "critical" ? #f07474 : health == "warning" ? #f2a94e : #bfec70;
+    FocusScope { focus-on-tab-navigation: false; }
+    if root.language-open: TouchArea { clicked => { root.language-open = false; } }
+    FocusScope {enabled:NetworkUi.modal=="" && !UpdateUi.dialog-open;focus-on-tab-navigation:false;
+    VerticalLayout {
+        padding-left: 20px; padding-right: 20px; padding-top: 12px; padding-bottom: 14px; spacing: 8px;
+        HorizontalLayout {
+            height: 34px; spacing: 3px;
+            WindowMoveArea {
+                width: brand.preferred-width + 4px;
+                FocusScope { focus-on-tab-navigation: false; }
+                brand := HorizontalLayout {
+                    spacing: 8px;
+                    Image { width: 22px; source: @image-url("../assets/icon/uplink.png"); }
+                    Label { text: "Uplink"; font-weight: 600; font-size: 16px; }
+                }
+            }
+            UpdateHeader {}
+            WindowMoveArea { horizontal-stretch: 1; }
+            HorizontalLayout { padding-top: 2px; padding-bottom: 2px; spacing: 3px;
+            Action { width: 30px; title-button: true; icon-only: true;
+                caption: @tr("Uplink settings");
+                filled: root.settings-open;
+                glyph-size: 18px; glyph: @image-url("../assets/icon/sliders.svg"); glyph-color: root.settings-open ? #bfec70 : #b9bdc3;
+                invoked => { NetworkUi.panel="";root.settings-open = !root.settings-open; root.error = ""; }
+            }
+            Action { width: 33px; title-button: true; caption: "−"; accessible-label: @tr("Minimize"); invoked => { root.minimized = true; } }
+            Action { width: 33px; title-button: true; caption: "×"; accessible-label: @tr("Close to tray"); invoked => { root.dismiss(); } }
+            }
+        }
+        if NetworkUi.panel!="": NetworkPage {editing<=>root.editing-room;}
+        if NetworkUi.panel=="" && !root.settings-open: Rectangle {
+            height: 46px; border-radius: 9px; background: #202225;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 10px; padding-top: 7px; padding-bottom: 7px; spacing: 2px;
+                EditableTitle {
+                    value: root.nickname; field-name: @tr("Nickname"); action-label: @tr("Edit nickname");
+                    horizontal-stretch: 1;
+                    editing <=> root.editing;
+                    changed-mode => { root.error = ""; }
+                    save(value) => { root.rename(value); }
+                }
+                Action {
+                    width: 32px; height: 30px; icon-only: true;
+                    caption: root.status-text + (root.power-on ? ". " + @tr("Turn off Uplink") : ". " + @tr("Turn on Uplink"));
+                    glyph: @image-url("../assets/icon/power.svg"); glyph-color: root.status-color;
+                    invoked => { root.change-option("power", !root.power-on); }
+                }
+            }
+        }
+        if NetworkUi.panel=="" && !root.settings-open && root.editing && root.error != "": Label { text: root.error; color: #e99087; height: 18px; font-size: 12px; }
+        if root.settings-open: VerticalLayout {
+            spacing: 6px; padding-top: 8px;
+            HorizontalLayout {
+                height: 32px; spacing: 6px;
+                Action {
+                    width: 30px; icon-only: true; caption: @tr("Back");
+                    glyph: @image-url("../assets/icon/back.svg"); glyph-size: 20px;
+                    invoked => { root.settings-open = false; root.error = ""; }
+                }
+                Label { text: @tr("Settings"); font-size: 21px; font-weight: 600; }
+            }
+            Rectangle { height: 188px; border-radius: 8px; background: #202225;
+                VerticalLayout {
+                    padding-top: 4px; padding-bottom: 4px;
+                    Preference { icon: @image-url("../assets/icon/windows.svg"); title: @tr("Launch at sign-in"); description: @tr("Start in the tray when you sign in to Windows"); checked <=> root.autostart; toggle(value) => { root.set-preference("autostart", value); } }
+                    Preference { icon: @image-url("../assets/icon/connect.svg"); title: @tr("Auto-connect"); description: @tr("Restore connections at startup"); checked <=> root.autoconnect; toggle(value) => { root.set-preference("autoconnect", value); } }
+                    Preference { icon: @image-url("../assets/icon/cloud.svg"); title: @tr("Automatic updates"); description: UpdateUi.channel-available ? @tr("Download new versions in the background") : @tr("Update channel is not connected yet"); checked <=> root.autoupdate; toggle(value) => { root.set-preference("autoupdate", value); } }
+                }
+            }
+            Rectangle {
+                height: 48px; border-radius: 8px; background: #202225;
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; spacing: 12px;
+                    PreferenceIcon { source: @image-url("../assets/icon/globe.svg"); }
+                    Label { text: @tr("Language"); font-weight: 600; }
+                    FocusScope {
+                        width: 132px; focus-on-tab-navigation: false;
+                        key-pressed(event) => {
+                            if root.language-open && event.text == Key.Escape { root.language-open = false; return accept; }
+                            return reject;
+                        }
+                        Action {
+                            y: (parent.height - self.height) / 2; width: parent.width;
+                            filled: true; borderless-focus: true; caption: root.language-name; caption-inset: 12px;
+                            accessible-label: @tr("Language") + ": " + root.language-name;
+                            invoked => { root.language-open = !root.language-open; }
+                            Image {
+                                x: parent.width - 22px; y: (parent.height - self.height) / 2;
+                                width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-down.svg");
+                            }
+                        }
+                    }
+                }
+            }
+            if root.language-open: HorizontalLayout {
+                padding-right: 14px; height: min(150px, root.languages.length * 30px + 8px);
+                Rectangle { horizontal-stretch: 1; }
+                FocusScope {
+                    width: 132px; focus-on-tab-navigation: false;
+                    key-pressed(event) => {
+                        if event.text == Key.Escape { root.language-open = false; return accept; }
+                        return reject;
+                    }
+                    Rectangle {
+                        background: #25272b; border-radius: 6px;
+                        ListView {
+                            x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
+                            for language in root.languages: Action {
+                                width: parent.width; caption: language.name; caption-inset: 8px;
+                                borderless-focus: true; selected: language.code == root.language-code;
+                                if self.selected: Image {
+                                    x: parent.width - 22px; y: (parent.height - self.height) / 2;
+                                    width: 14px; height: 14px; source: @image-url("../assets/icon/check.svg");
+                                }
+                                invoked => { root.change-language(language.code); root.language-open = false; }
+                            }
+                        }
+                    }
+                }
+            }
+            if root.error != "" && !root.editing: Label { text: root.error; color: #e99087; height: 26px; }
+            Rectangle {}
+        }
+        if NetworkUi.panel=="" && !root.settings-open && !root.power-on: Rectangle {
+            vertical-stretch: 1;
+            reconnect := ButtonFocus {
+                width: 176px; height: 112px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                accessible-role: button;
+                accessible-label: @tr("Turn on Uplink");
+                function activate() { root.change-option("power", true); }
+                accessible-action-default => { self.activate(); }
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == " " { self.activate(); return accept; }
+                    return reject;
+                }
+                Rectangle {
+                    border-radius: 6px; border-width: 1px;
+                    border-color: reconnect.show-focus ? #62676d : transparent;
+                }
+                Image {
+                    x: (parent.width - self.width) / 2; y: 6px; width: 76px; height: 76px;
+                    source: @image-url("../assets/icon/unplugged.svg");
+                    colorize: hit.has-hover || reconnect.show-focus ? #969ca3 : #62676e;
+                }
+                Label {
+                    x: 0px; y: 88px; width: parent.width; height: 20px;
+                    text: @tr("Uplink is off"); horizontal-alignment: center;
+                    color: hit.has-hover || reconnect.show-focus ? #d2d5d9 : #a2a7af;
+                }
+                hit := TouchArea {
+                    mouse-cursor: pointer;
+                    pointer-event(event) => { if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { reconnect.focus-from-pointer(); } }
+                    clicked => { reconnect.activate(); }
+                }
+            }
+            if root.error != "" && !root.editing: Label { text: root.error; color: #e99087; height: 26px; }
+        }
+        if NetworkUi.panel=="" && !root.settings-open && root.power-on && root.health == "critical": VerticalLayout {
+            spacing: 4px; padding-top: 15px;
+            Label { text: root.status-text; font-size: 18px; height: 30px; font-weight: 600; }
+            if root.error != "" && !root.editing: Label { text: root.error; color: #e99087; height: 26px; }
+            Rectangle {}
+        }
+        if NetworkUi.panel=="" && !root.settings-open && root.power-on && root.health != "critical" && !root.joined: VerticalLayout {
+            vertical-stretch: 0; spacing: 8px; padding-top: 10px;
+            Label { height: 28px; text: @tr("My networks"); font-size: 16px; font-weight: 600; }
+            JoinMode{}
+            if NetworkUi.credentials: Credentials{}
+            if !NetworkUi.credentials: JoinField { submit(value) => { root.join-room(value); } }
+            if root.error != "" && !root.editing: Label { height: 18px; text: root.error; color: #e99087; }
+        }
+        if NetworkUi.panel=="" && !root.settings-open && root.power-on && root.health != "critical" && !root.joined: Rectangle {}
+        if NetworkUi.panel=="" && !root.settings-open && root.power-on && root.health != "critical" && root.joined: HorizontalLayout {
+            padding-top: 8px; spacing: 12px;
+            rail := Rectangle {
+                width: 43px;
+                Rectangle { x: 42px; width: 1px; background: #2e3034; }
+                rail-list := ListView {
+                    x: 0px; y: 0px; width: 34px; height: min(rail.height - 31px, root.rooms.length * 41px);
+                    for network in root.rooms: ButtonFocus {
+                        height: 41px;
+                        accessible-role: button; accessible-label: network.name;
+                        accessible-action-default => { root.select-room(network.url); }
+                        key-pressed(event) => {
+                            if event.text == Key.Return || event.text == Key.Space { root.select-room(network.url); return accept; }
+                            return reject;
+                        }
+                        Rectangle {
+                            x: 1px; y: 1px; width: 32px; height: 32px; border-radius: 7px;
+                            background: network.server == "coop.example" ? #262d32 : network.server == "arena.example" ? #302b27 : network.server == "pine.example" ? #282e29 : network.server == "night.example" ? #2b2930 : #272b2d;
+                            border-width: parent.show-focus ? 2px : 1px;
+                            border-color: network.url == root.invite-url ? #bfec70 : parent.show-focus ? #a7abb2 : transparent;
+                            clip:true;
+                            if network.has-avatar: Image{x:1px;y:1px;width:30px;height:30px;source:network.avatar;image-fit:cover;}
+                            if !network.has-avatar: Label { text: network.initials; font-size: 11px; font-weight: 600; color: network.server == "coop.example" ? #bccbd6 : network.server == "arena.example" ? #d4c7b7 : network.server == "pine.example" ? #bdcdb9 : network.server == "night.example" ? #cac2d5 : #c4c9ca; horizontal-alignment: center; }
+                        }
+                        TouchArea {
+                            x: 0px; y: 0px; width: 34px; height: 34px; mouse-cursor: pointer;
+                            pointer-event(event) => { if event.kind == PointerEventKind.down { parent.focus-from-pointer(); } }
+                            clicked => { root.select-room(network.url); }
+                            Tooltip { HintCard { message: network.name + " · " + network.server; } }
+                        }
+                    }
+                }
+                Action {
+                    x: 0px; y: rail-list.height + 1px; width: 34px; height: 30px;
+                    icon-only: true; glyph: @image-url("../assets/icon/add-network.svg"); glyph-size: 18px;
+                    glyph-rotation: root.adding-network ? 45deg : 0deg;
+                    caption: root.adding-network ? @tr("Cancel") : @tr("Join network");
+                    invoked => { root.adding-network = !root.adding-network; root.error = ""; }
+                }
+            }
+            VerticalLayout {
+                spacing: 0px;
+                if root.adding-network: JoinMode{}
+                if root.adding-network && NetworkUi.credentials: Credentials{}
+                if root.adding-network && !NetworkUi.credentials: JoinField {
+                    autofocus: true;
+                    submit(value) => { root.join-room(value); }
+                    cancel => { root.adding-network = false; root.error = ""; }
+                }
+                if root.adding-network: Rectangle { height: 7px; }
+                HorizontalLayout {
+                    height: 32px; spacing: 0px;
+                    Label {text:root.room-name;font-size:18px;font-weight:600;horizontal-stretch:1;overflow:elide;}
+                    if NetworkUi.manages || root.is-creator: Action{width:25px;height:28px;icon-only:true;glyph:@image-url("../assets/icon/settings.svg");caption:@tr("Network settings");invoked=>{NetworkUi.panel="general";NetworkUi.error="";}}
+                    if !NetworkUi.live || NetworkUi.manages: Action {width:25px;height:28px;icon-only:true;caption:@tr("Invite");glyph:@image-url("../assets/icon/invite.svg");invoked=>{NetworkUi.open-invite();}}
+                    Action { width: 25px; height: 28px; icon-only: true; caption: @tr("Leave"); glyph: @image-url("../assets/icon/leave.svg"); invoked => { root.leave-room(); } }
+                }
+                Rectangle { height: 2px; }
+                Label { height: 21px; text: root.room-server; font-size: 11px; color: #a7abb2; }
+                Rectangle { height: 12px; }
+                HorizontalLayout {
+                    height: 26px; padding-left: 5px; padding-right: 0px; spacing: 0px;
+                    SortHeading { caption: @tr("Ping"); width: 63px; selected: root.by-ping; descending: root.descending; invoked => { root.sort-members(true); } }
+                    SortHeading { caption: @tr("Members"); horizontal-stretch: 1; selected: !root.by-ping; descending: root.descending; invoked => { root.sort-members(false); } }
+                    Label { text: @tr("IP address"); horizontal-alignment: left; width: 105px; font-size: 11px; color: #a7abb2; }
+                }
+                if root.error != "" && !root.editing: Label { height: 18px; text: root.error; color: #e99087; }
+                list := ListView {
+                    for member in root.members: Rectangle {
+                        height: 32px; background: #1d1f22;
+                        Rectangle { y: parent.height - 1px; height: 1px; background: #2a2c2f; }
+                        HorizontalLayout {
+                            padding-left: 5px; padding-right: 0px; spacing: 0px;
+                            Rectangle { width: 63px;
+                                PingIndicator {
+                                    x: 0px; width: parent.width; reading: member.ping;
+                                    description: member.own ? @tr("Your ping to the server") : @tr("Ping to {}", member.nick);
+                                }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                participant := Label {
+                                    x: 0px; width: min(self.preferred-width, parent.width - (member.creator || member.admin ? 19px : 0px));
+                                    height: parent.height; text: member.nick;
+                                    font-weight: member.own ? 600 : 400;
+                                }
+                                if member.creator: Crown { x: participant.width + 5px; }
+                                if member.admin && !member.creator: Image {
+                                    x: participant.width + 5px; width: 14px; height: 16px;
+                                    source: @image-url("../assets/icon/admin.svg");
+                                    accessible-role: image; accessible-label: @tr("Administrator");
+                                    Tooltip { HintCard { message: @tr("Administrator"); } }
+                                }
+                            }
+                            Rectangle { width: 105px;
+                                CopyAddress { x: -5px; ip: member.ip; owner: member.nick; copy => { return root.copy(member.ip); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+    if NetworkUi.modal!="": NetworkDialog {}
+    if UpdateUi.dialog-open: UpdateDialog {}
+}

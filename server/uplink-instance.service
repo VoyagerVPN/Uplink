@@ -1,0 +1,18 @@
+[Unit]
+Description=Uplink test instance API
+Requires=uplink-zt.service
+After=uplink-zt.service
+
+[Service]
+User=uplink-zt
+Group=uplink-zt
+WorkingDirectory=/opt/uplink-zt
+ExecStart=/usr/bin/python3 -E -s -B -c "import instance; instance.serve()"
+StateDirectory=uplink-instance
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+UMask=0077
