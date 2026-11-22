@@ -62,6 +62,8 @@ To add a translation, copy the [Russian catalog](lang/ru/LC_MESSAGES/uplink.po) 
 .\uplinkctl.exe show
 ```
 
+For an unattended join, run `uplinkctl join --headless URL`. It saves the membership without opening the window. Live invitations require an already configured ZeroTier installation and Uplink device certificate. If setup is needed, the command exits before contacting the server or starting an elevation prompt.
+
 `window` can be `open`, `minimized`, `tray` or `stopped`. The selected network's `source` is `zerotier` or `local_fixture`. An unknown ping is `null`. Tray modes are `green`, `ping` and `system`. You can read state and edit the profile while the window is closed. Profile changes notify the open GUI. The `show` and `join` commands open the window.
 
 ## Build and install for the current user

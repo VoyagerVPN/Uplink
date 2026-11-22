@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import ipaddress
 
 from instance import ApiError
 from invites import Invitations
@@ -34,6 +35,36 @@ class GroupTrafficTest(unittest.TestCase):
     def setup_groups(self):
         for group, name in ((self.a, "A"), (self.b, "B")):
             self.api.create_group(group, {"name": name, "transport": self.transport, "subnet": "10.188.37.0/24"})
+
+    def test_owner_can_create_networks_by_name_on_a_new_instance(self):
+        self.networks[self.transport] = {
+            "id": self.transport, "name": "Legacy", "routes": [{"target": "10.0.0.0/9"}]
+        }
+        first_status, first = self.api.create_group(self.a, {"name": "Friday"})
+        self.assertEqual(first_status, 201)
+        shared = first["transport"]
+        self.assertNotEqual(shared, self.transport)
+        self.assertTrue(shared.startswith(self.transport[:10]))
+        subnet = ipaddress.IPv4Network(self.networks[shared]["routes"][0]["target"])
+        self.assertEqual(subnet.prefixlen, 24)
+        self.assertFalse(subnet.overlaps(ipaddress.IPv4Network("10.0.0.0/9")))
+        self.assertEqual(self.api.create_group(self.a, {"name": "Friday"}), (200, first))
+        self.assertEqual(self.api.create_group(self.b, {"name": "Weekend"})[1]["transport"], shared)
+        with self.assertRaises(ApiError) as conflict:
+            self.api.create_group("3" * 32, {"name": " friday "})
+        self.assertEqual(conflict.exception.status, 409)
+
+    def test_automatic_setup_can_retry_after_no_subnet_was_available(self):
+        self.networks[self.transport] = {
+            "name": "Existing", "routes": [{"target": "10.0.0.0/8"}]
+        }
+        with self.assertRaises(ApiError) as busy:
+            self.api.create_group(self.a, {"name": "Friday"})
+        self.assertEqual(busy.exception.status, 409)
+        self.assertEqual(list(self.networks), [self.transport])
+        status, _ = self.api.create_group(self.a, {"name": "Friday", "transport": self.transport[:10] + "ff8100",
+                                                   "subnet": "172.18.0.0/24"})
+        self.assertEqual(status, 201)
 
     def test_two_groups_one_transport_and_separate_rosters(self):
         self.setup_groups()

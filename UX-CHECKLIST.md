@@ -87,6 +87,11 @@ Earlier results with one adapter per network:
 
 ## Server and transport
 
+- [x] Generate a private Linux root from the supplied UDP endpoint with the stock ZeroTier 1.16.2 binary. Confirm repeated setup preserves the keys and signed planet and refuses an incomplete bundle or endpoint change.
+
+- [x] On a fresh isolated Linux instance with ZeroTier 1.16.2, create two logical networks on the owner socket by name alone. Verify a single shared transport, idempotent retries, duplicate-name rejection, bootstrap of an invitation against the generated private planet, and rejection of network creation on the public client API.
+- [x] Run the Windows installer silently in an SSH service session on a second physical PC. Verify a stopped window and exercise the development CLI's headless join with an isolated demo profile. This checks the unattended UI path on one LAN. The live two-client test below remains open.
+
 - [ ] Let the owner create their first network on a rented VPS from the Windows client. After the owner grants access, a single action installs the Uplink server, creates the network and returns an invitation for friends. Subsequent networks reuse the installed server.
 
 Uplink's test instance is ServerHQ service 129.

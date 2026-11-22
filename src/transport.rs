@@ -180,10 +180,12 @@ pub fn password_invite(host: &str, name: &str, password: &str) -> io::Result<Str
     ))
 }
 
+fn device_is_prepared(home: &std::path::Path) -> bool {
+    home.join("zerotier-one_x64.exe").is_file() && home.join("uplink-proof/certificate").is_file()
+}
+
 fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result<()> {
-    if home.join("zerotier-one_x64.exe").is_file()
-        && home.join("uplink-proof/certificate").is_file()
-    {
+    if device_is_prepared(home) {
         return Ok(());
     }
     let helper = std::env::current_exe()?.with_file_name("UplinkNetwork.exe");
@@ -226,7 +228,13 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
     Ok(())
 }
 
-pub fn bootstrap(host: &str, token: &str) -> io::Result<Membership> {
+pub fn bootstrap(host: &str, token: &str, allow_setup_prompt: bool) -> io::Result<Membership> {
+    let home = home()?;
+    if !allow_setup_prompt && !device_is_prepared(&home) {
+        return Err(io::Error::other(
+            "Prepare the Uplink transport before joining headlessly",
+        ));
+    }
     let info = post(host, "bootstrap", json!({"token": token, "version":2}))?;
     let planet = STANDARD
         .decode(info["planet"].as_str().unwrap_or(""))
@@ -234,8 +242,9 @@ pub fn bootstrap(host: &str, token: &str) -> io::Result<Membership> {
     if !(100..=65536).contains(&planet.len()) {
         return Err(io::Error::other("Invalid ZeroTier root"));
     }
-    let home = home()?;
-    prepare_device(&home, host, token)?;
+    if allow_setup_prompt {
+        prepare_device(&home, host, token)?;
+    }
     if fs::read(home.join("planet"))? != planet {
         return Err(io::Error::other(
             "This network requires a different ZeroTier root configuration",

@@ -1,9 +1,10 @@
 """Логические сети одного инстанса, изолированные подписанными метками ZeroTier."""
 import ipaddress
 import re
+import secrets
 import unicodedata
 
-from instance import ApiError, adapter_mac_prefix, network_config
+from instance import ApiError, adapter_mac_prefix, network_config, network_name
 
 
 def schema(db):
@@ -29,25 +30,61 @@ def require_available_name(db, backend, network, name):
                 raise ApiError(409, "Network name already in use")
 
 
+def select_transport(controller, existing):
+    used = {adapter_mac_prefix(network) for network in existing}
+    for _ in range(64):
+        transport = controller + secrets.token_hex(3)
+        if adapter_mac_prefix(transport) not in used:
+            break
+    else:
+        raise ApiError(409, "Specify a free transport ID")
+
+    # Начинаем с произвольной /24, пересекающиеся маршруты пропускаем целиком.
+    pool = ipaddress.IPv4Network("10.0.0.0/8")
+    start = int(pool.network_address) + (secrets.randbelow(65536) << 8)
+    routes = sorted(ipaddress.IPv4Network(r["target"]) for config in existing.values()
+                    for r in config["routes"] if ":" not in r["target"])
+    for cursor, end in ((start, int(pool.broadcast_address)), (int(pool.network_address), start - 1)):
+        for route in routes:
+            if cursor + 255 < int(route.network_address):
+                break
+            if cursor <= int(route.broadcast_address):
+                cursor = (int(route.broadcast_address) | 255) + 1
+        if cursor + 255 <= end:
+            return transport, str(ipaddress.IPv4Network((cursor, 24)))
+    raise ApiError(409, "Specify an available private /24 subnet")
+
+
 def create(api, group, data):
-    transport = data.get("transport")
-    config = network_config(data)
-    if not re.fullmatch("[a-f0-9]{32}", group) or not isinstance(transport, str) or not re.fullmatch("[a-f0-9]{16}", transport):
-        raise ApiError(400, "Invalid identifier")
-    if not transport.startswith(api.transport("/status")["address"]):
-        raise ApiError(400, "Transport belongs to another controller")
-    subnet = config["routes"][0]["target"]
+    if not re.fullmatch("[a-f0-9]{32}", group):
+        raise ApiError(400, "Invalid group ID")
+    name = network_name(data.get("name"))
+    controller = api.transport("/status")["address"]
     # Резервируем пустой транспорт до обращения на запись. Повтор после сбоя безопасен.
     with api.transaction() as db:
         current = db.execute("SELECT id,subnet FROM shared_transport").fetchone()
+        existing_networks = {} if current else {
+            network: api.transport("/controller/network/" + network)
+            for network in api.transport("/controller/network")
+        }
+        if "transport" not in data and "subnet" not in data:
+            transport, subnet = tuple(current) if current else select_transport(controller, existing_networks)
+        else:
+            transport, subnet = data.get("transport"), data.get("subnet")
+        config = network_config({"name": name, "subnet": subnet})
+        subnet = config["routes"][0]["target"]
+        if not isinstance(transport, str) or not re.fullmatch("[a-f0-9]{16}", transport):
+            raise ApiError(400, "Invalid identifier")
+        if not transport.startswith(controller):
+            raise ApiError(400, "Transport belongs to another controller")
         if current and tuple(current) != (transport, subnet):
             raise ApiError(409, "Instance already has a different shared transport")
         if not current:
             require_available_name(db, api.transport, group, config["name"])
-            for existing in api.transport("/controller/network"):
+            for existing, existing_config in existing_networks.items():
                 if adapter_mac_prefix(existing) == adapter_mac_prefix(transport):
                     raise ApiError(409, "Transport ID already in use")
-                routes = api.transport("/controller/network/"+existing)["routes"]
+                routes = existing_config["routes"]
                 if any(ipaddress.ip_network(subnet).overlaps(ipaddress.ip_network(route["target"]))
                        for route in routes if ":" not in route["target"]):
                     raise ApiError(409, "Transport subnet overlaps another network")

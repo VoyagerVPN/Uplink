@@ -15,6 +15,16 @@ The Linux instance runs a private ZeroTier root and controller, a local API for 
 
 A test client needs the signed public `planet` file and the network ID. Replacing `planet` in an existing ZeroTier installation affects every network it uses. Test clients use separate state directories. Each client generates its own key pair, presents a single-use invitation and waits for the controller to register its join request. The owner can also manage membership through the Unix socket. Admission requires authorization even if the client already has the public file and network ID.
 
+## Prepare a private root on a new Linux host
+
+With the verified ZeroTier One 1.16.2 binary installed at the path above, run this as the instance owner with root permissions. Substitute the public IPv4 address and externally mapped UDP port for the documentation example.
+
+```sh
+python3 prepare_root.py /var/lib/uplink-zt-signing 192.0.2.10 30000
+```
+
+The command stages fresh keys and publishes the bundle after signing the planet. Repeating it for the same endpoint keeps the identity and planet. An incomplete bundle or a different endpoint requires operator attention. Protect the entire signing directory as a root-only backup. On a new, empty controller installation, place copies of `identity.secret`, `identity.public` and `planet` in `/var/lib/uplink-zt`, owned by `uplink-zt` with mode `0600`, before starting the service. Keep `world.json` in the signing directory. The bundle prepares the private root. UDP forwarding, TLS and systemd installation remain separate deployment steps.
+
 ## Owner API
 
 Read the instance state on the server with the following command.
@@ -35,15 +45,15 @@ curl --fail --unix-socket /run/uplink-instance.sock http://localhost/v1/instance
 
 ## Multiple groups on one adapter
 
-Create the first logical network on an instance through the local owner socket. This example uses controller ID `0123456789`.
+Create the first logical network through the local owner socket. Generate a unique 32-digit hexadecimal group ID and keep it for retries. The request body only needs the network name.
 
 ```sh
 curl --fail --unix-socket /run/uplink-instance.sock -X PUT -H 'Content-Type: application/json' \
-  -d '{"name":"A","transport":"0123456789b01864","subnet":"10.233.187.0/24"}' \
+  -d '{"name":"After Hours"}' \
   http://localhost/v1/groups/cc019d6a319d4f9a8bc188529115fda1
 ```
 
-For group B, use a second 32-digit hexadecimal ID and a different name. All groups on an instance share the same `transport` and `subnet`. For the first group, choose a new transport ID and an available subnet. Legacy standalone networks keep their existing connections and invitations. Controller 1.16.2 supports up to 128 signed tags per network. This version of Uplink uses one tag per group.
+For another group, use a fresh ID and a different name. The first request allocates a shared ZeroTier transport and a private /24 in `10.0.0.0/8`, skipping IPv4 routes already registered with this controller. Subsequent groups reuse the allocation. To avoid a conflict with a physical LAN known to the owner, set both `transport` and `subnet` explicitly on the first request. Legacy standalone networks keep their connections and invitations. Controller 1.16.2 supports up to 128 signed tags per network. Uplink uses one tag per group.
 
 Use `/v1/networks/{group_id}/invites` to issue invitations and `/v1/networks/{group_id}/owner` to assign the first owner. Roles, names and member lists belong to individual groups. During bootstrap, the Windows client sends `version: 2`, stores a separate group session and joins the returned 16-digit transport ID. When joining a second group, the client proves node ownership with the session of a group it already belongs to on that instance. `POST /v1/leave` takes the session of the group being left. Leaving the last group revokes the node's authorization on the shared transport. Controller rules allow frames through only when both endpoints share an active tag.
 

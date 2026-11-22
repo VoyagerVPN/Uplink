@@ -445,6 +445,10 @@ msgctxt "native"
 msgid "Run the Uplink transport installer to verify this device"
 msgstr "Запустите установщик транспорта Uplink для подтверждения устройства"
 
+msgctxt "native"
+msgid "Prepare the Uplink transport before joining headlessly"
+msgstr "Для подключения без окна сначала настройте транспорт Uplink"
+
 msgid "Uplink Setup"
 msgstr "Установка Uplink"
 

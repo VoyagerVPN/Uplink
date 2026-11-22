@@ -273,12 +273,20 @@ fn select_url(prefs: &mut Value, url: &str, allow_join: bool) -> io::Result<()> 
 }
 
 pub fn join(path: &Path, url: &str) -> io::Result<()> {
+    join_with_setup(path, url, true)
+}
+
+pub fn join_headless(path: &Path, url: &str) -> io::Result<()> {
+    join_with_setup(path, url, false)
+}
+
+fn join_with_setup(path: &Path, url: &str, allow_setup_prompt: bool) -> io::Result<()> {
     if let Some((host, token)) = crate::invite::instance_link(url) {
         let _guard = transport_lock(path)?;
         if !options(path)?.enabled {
             return Err(io::Error::other("Uplink is disabled"));
         }
-        let mut live = crate::transport::bootstrap(host, token)?;
+        let mut live = crate::transport::bootstrap(host, token, allow_setup_prompt)?;
         let key = live.key();
         let existing = crate::transport::interface(live.interface_id())?.is_some();
         let prefs = read(path)?;

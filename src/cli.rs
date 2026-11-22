@@ -19,7 +19,7 @@ use std::{
 };
 use uplink::{changed, control, invite, peers, settings};
 
-const USAGE: &str = "uplinkctl update status|check|download|install | status | rooms | select URL | power on|off | language CODE | setting autostart|autoconnect|autoupdate on|off | demo-health ok|warning|critical | members | invite | nick NAME | rename-room NAME | join URL | leave | tray green|ping|system | show | hide";
+const USAGE: &str = "uplinkctl update status|check|download|install | status | rooms | select URL | power on|off | language CODE | setting autostart|autoconnect|autoupdate on|off | demo-health ok|warning|critical | members | invite | nick NAME | rename-room NAME | join [--headless] URL | leave | tray green|ping|system | show | hide";
 
 fn validate(args: &[&str]) -> io::Result<()> {
     match args {
@@ -33,7 +33,8 @@ fn validate(args: &[&str]) -> io::Result<()> {
             "on" | "off",
         ]
         | ["demo-health", "ok" | "warning" | "critical"]
-        | ["select" | "nick" | "rename-room" | "join" | "tray", _] => Ok(()),
+        | ["select" | "nick" | "rename-room" | "join" | "tray", _]
+        | ["join", "--headless", _] => Ok(()),
         _ => Err(io::Error::new(io::ErrorKind::InvalidInput, USAGE)),
     }
 }
@@ -132,16 +133,23 @@ fn execute(args: &[&str]) -> io::Result<Value> {
             settings::rename_room(&path, name)?;
             changed::notify()?;
         }
-        ["join", url] => {
+        ["join", url] | ["join", "--headless", url] => {
             if !invite::accepts_invite(url) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Unknown invitation",
                 ));
             }
-            settings::join(&path, url)?;
+            let headless = args.len() == 3;
+            if headless {
+                settings::join_headless(&path, url)?;
+            } else {
+                settings::join(&path, url)?;
+            }
             changed::notify()?;
-            change_window(true)?;
+            if !headless {
+                change_window(true)?;
+            }
         }
         ["select", url] => {
             settings::select(&path, url)?;
