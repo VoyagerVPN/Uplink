@@ -78,7 +78,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let mut window = window_process::WindowProcess::new()?;
-    let _tray = tray::install()?;
+    let tray = tray::install()?;
     let profile = settings::path()?;
     let updates = update_worker::start(profile.clone(), updated);
     std::thread::spawn(move || {
@@ -126,8 +126,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         continue;
                     }
+                    tray::ACTIVATE_ICON => {
+                        if let Err(error) = window.activate_icon() {
+                            report(&error);
+                        }
+                        continue;
+                    }
                     control::HIDE => {
                         window.close();
+                        continue;
+                    }
+                    tray::CONTEXT_MENU => {
+                        if let Err(error) = window.open_tray_menu(&tray, message.wParam) {
+                            report(&error);
+                        }
                         continue;
                     }
                     tray::QUIT | WM_QUIT => {

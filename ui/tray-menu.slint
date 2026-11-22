@@ -1,0 +1,108 @@
+import { Action, ButtonFocus, Label } from "controls.slint";
+import { ButtonStyle } from "button-style.slint";
+
+export enum TrayChoice { open, power-on, power-off, green, ping, system, quit }
+
+component IconChoice inherits Rectangle {
+    in property <string> caption;
+    in property <bool> selected;
+    in property <color> icon-color;
+    in property <color> preview-background: #212325;
+    in property <int> bars: 3;
+    callback invoked();
+    height: 34px;
+    border-radius: 6px;
+    background: touch.has-hover || keys.show-focus ? ButtonStyle.hover-background : root.selected ? #282f22 : transparent;
+    border-width: keys.show-focus ? 1px : 0px;
+    border-color: #8c929a;
+    accessible-role: radio-button;
+    accessible-label: root.caption;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-action-default => { root.invoked(); }
+    Rectangle {
+        x: 9px; width: 25px; height: 23px; border-radius: 4px;
+        background: root.preview-background;
+        for index in 3: Rectangle {
+            x: 6px + index * 5px; y: 16px - self.height;
+            width: 3px; height: 5px + index * 3px; border-radius: 1px;
+            background: index < root.bars ? root.icon-color : #52565c;
+        }
+    }
+    Label { x: 44px; width: parent.width - 78px; text: root.caption; color: root.selected ? #bfec70 : #eff0f2; }
+    if root.selected: Image {
+        x: parent.width - 25px; width: 15px; height: 15px;
+        source: @image-url("../assets/icon/check.svg"); colorize: #bfec70;
+    }
+    keys := ButtonFocus {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.invoked(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { keys.focus-from-pointer(); }
+        }
+        clicked => { root.invoked(); }
+    }
+}
+
+export component TrayMenu inherits Window {
+    title: @tr("Uplink tray menu");
+    no-frame: true;
+    width: 228px;
+    height: 248px;
+    default-font-family: "Inter";
+    background: #17181a;
+    in property <TrayChoice> mode;
+    in property <bool> power-on;
+    in property <bool> power-busy;
+    in property <bool> light-taskbar;
+    callback choose(TrayChoice);
+
+    Rectangle {
+        border-width: 1px; border-color: #383b3e;
+        VerticalLayout {
+            padding: 8px; spacing: 2px;
+            Action {
+                width: parent.width - 16px; caption: @tr("Open Uplink"); align-start: true;
+                invoked => { root.choose(TrayChoice.open); }
+            }
+            Action {
+                width: parent.width - 16px; align-start: true;
+                available: !root.power-busy;
+                caption: root.power-on ? @tr("Turn off Uplink") : @tr("Turn on Uplink");
+                invoked => { root.choose(root.power-on ? TrayChoice.power-off : TrayChoice.power-on); }
+            }
+            Rectangle { height: 1px; background: #383b3e; }
+            Rectangle {
+                height: 21px;
+                Label { width: parent.width - 20px; x: 10px; text: @tr("Tray icon"); color: #afb3b8; font-size: 11px; }
+            }
+            IconChoice {
+                caption: @tr("Green"); icon-color: #bfec70;
+                selected: root.mode == TrayChoice.green;
+                invoked => { root.choose(TrayChoice.green); }
+            }
+            IconChoice {
+                caption: @tr("Ping"); icon-color: #e8bf74; bars: 2;
+                selected: root.mode == TrayChoice.ping;
+                invoked => { root.choose(TrayChoice.ping); }
+            }
+            IconChoice {
+                caption: @tr("Windows theme");
+                preview-background: root.light-taskbar ? #eceef0 : #212325;
+                icon-color: root.light-taskbar ? #292b2e : #f2f3f4;
+                selected: root.mode == TrayChoice.system;
+                invoked => { root.choose(TrayChoice.system); }
+            }
+            Rectangle { height: 1px; background: #383b3e; }
+            Action {
+                width: parent.width - 16px; caption: @tr("Quit Uplink"); align-start: true;
+                invoked => { root.choose(TrayChoice.quit); }
+            }
+        }
+    }
+}

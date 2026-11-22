@@ -2,7 +2,8 @@
 [CmdletBinding(DefaultParameterSetName='Link')]
 param(
     [Parameter(Mandatory,ParameterSetName='Link')][string]$Invitation,
-    [Parameter(Mandatory,ParameterSetName='Input')][switch]$ReadInvitation
+    [Parameter(Mandatory,ParameterSetName='Input')][switch]$ReadInvitation,
+    [switch]$Headless
 )
 if ($ReadInvitation) { $Invitation = [Console]::In.ReadLine() }
 $ErrorActionPreference = 'Stop'
@@ -133,7 +134,9 @@ if ($needsMsi) {
             }
         }
         $msiexec = Join-Path $env:SystemRoot 'System32/msiexec.exe'
-        $process = Start-Process $msiexec -ArgumentList @('/i',('"{0}"' -f $package),'/qn','/norestart') -WindowStyle Hidden -Wait -PassThru
+        $arguments = @('/i',('"{0}"' -f $package),'/qn','/norestart')
+        if ($Headless) { $arguments += 'ZTHEADLESS=Yes' }
+        $process = Start-Process $msiexec -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
         if ($process.ExitCode -notin 0,3010) { throw "Код установщика ZeroTier $($process.ExitCode)." }
     } finally {
         if ([IO.File]::Exists($package)) { [IO.File]::Delete($package) }

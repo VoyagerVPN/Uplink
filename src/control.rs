@@ -27,6 +27,7 @@ pub const UPDATE_CHECK: u32 = WM_APP + 24;
 pub const UPDATE_DOWNLOAD: u32 = WM_APP + 25;
 pub const UPDATE_INSTALL: u32 = WM_APP + 26;
 pub const UPDATE_AUTO: u32 = WM_APP + 27;
+pub const QUIT: u32 = WM_APP + 28;
 
 pub fn tray_window() -> windows_sys::Win32::Foundation::HWND {
     unsafe { FindWindowW(class(), ptr::null()) }

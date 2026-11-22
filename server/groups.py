@@ -113,13 +113,18 @@ def group_info(db, network):
                       (network,)).fetchone()
 
 
+def directory_group(db, network):
+    group = group_info(db, network)
+    if not group and db.execute("SELECT 1 FROM shared_transport WHERE id=?", (network,)).fetchone():
+        raise ApiError(403, "Transport is managed through logical networks")
+    return group
+
+
 def directory(db, backend, path, payload=None):
     prefix = "/controller/network/"
     network, _, tail = path.removeprefix(prefix).partition("/")
-    group = group_info(db, network)
+    group = directory_group(db, network)
     if not group:
-        if db.execute("SELECT 1 FROM shared_transport WHERE id=?", (network,)).fetchone():
-            raise ApiError(403, "Transport is managed through logical networks")
         return backend(path) if payload is None else backend(path, payload)
     if not tail:
         if payload is not None:

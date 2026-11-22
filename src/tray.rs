@@ -1,6 +1,6 @@
 use std::{io, ptr, sync::OnceLock};
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::{Shell::*, WindowsAndMessaging::*},
 };
@@ -9,11 +9,40 @@ use windows_sys::core::w;
 pub const OPEN: u32 = WM_APP + 1;
 pub const QUIT: u32 = WM_APP + 2;
 const CALLBACK: u32 = WM_APP + 3;
+pub const CONTEXT_MENU: u32 = WM_APP + 4;
+pub const ACTIVATE_ICON: u32 = WM_APP + 5;
 const KEY_SELECT: u32 = NIN_SELECT | 1;
 static EXPLORER_STARTED: OnceLock<u32> = OnceLock::new();
 
 pub struct Tray {
     window: HWND,
+}
+
+impl Tray {
+    pub fn menu_anchor(&self, at: WPARAM) -> POINT {
+        let mut point = POINT {
+            x: at as i16 as i32,
+            y: (at >> 16) as i16 as i32,
+        };
+        unsafe {
+            if point.x == -1 && point.y == -1 {
+                let icon = NOTIFYICONIDENTIFIER {
+                    cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
+                    hWnd: self.window,
+                    uID: 1,
+                    ..Default::default()
+                };
+                let mut bounds = RECT::default();
+                if Shell_NotifyIconGetRect(&icon, &mut bounds) >= 0 {
+                    point.x = (bounds.left + bounds.right) / 2;
+                    point.y = (bounds.top + bounds.bottom) / 2;
+                } else {
+                    GetCursorPos(&mut point);
+                }
+            }
+        }
+        point
+    }
 }
 
 impl Drop for Tray {
@@ -55,77 +84,19 @@ fn register(window: HWND, icon: HICON) -> io::Result<()> {
     Ok(())
 }
 
-fn context_menu(window: HWND, at: WPARAM) {
-    unsafe {
-        let menu = CreatePopupMenu();
-        if menu.is_null() {
-            return;
-        }
-        let code = uplink::i18n::current();
-        let wide = |source: &str| {
-            uplink::i18n::message(&code, source)
-                .encode_utf16()
-                .chain(Some(0))
-                .collect::<Vec<_>>()
-        };
-        AppendMenuW(menu, MF_STRING, OPEN as usize, wide("Open Uplink").as_ptr());
-        let mode = crate::settings::path()
-            .and_then(|p| crate::settings::tray_mode(&p))
-            .unwrap_or_default();
-        AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
-        for (id, key, label) in [
-            (101, "green", "Icon: green"),
-            (102, "ping", "Icon: ping"),
-            (103, "system", "Icon: Windows theme"),
-        ] {
-            AppendMenuW(
-                menu,
-                MF_STRING | if mode == key { MF_CHECKED } else { 0 },
-                id,
-                wide(label).as_ptr(),
-            );
-        }
-        AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
-        AppendMenuW(menu, MF_STRING, QUIT as usize, wide("Quit Uplink").as_ptr());
-        SetForegroundWindow(window);
-        let cmd = TrackPopupMenu(
-            menu,
-            TPM_RETURNCMD | TPM_RIGHTBUTTON,
-            at as i16 as i32,
-            (at >> 16) as i16 as i32,
-            0,
-            window,
-            ptr::null(),
-        );
-        DestroyMenu(menu);
-        PostMessageW(window, WM_NULL, 0, 0);
-        if (101..=103).contains(&cmd) {
-            let mode = ["green", "ping", "system"][(cmd - 101) as usize];
-            if let Err(e) = crate::settings::path()
-                .and_then(|p| crate::settings::save_tray_mode(&p, mode))
-                .and_then(|()| apply_icon(window))
-            {
-                crate::report(&e);
-            }
-        } else if cmd != 0 {
-            PostThreadMessageW(GetCurrentThreadId(), cmd as u32, 0, 0);
-        }
-    }
-}
-
 unsafe extern "system" fn messages(window: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         crate::control::UPDATE_CHECK..=crate::control::UPDATE_AUTO => {
             return unsafe { PostThreadMessageW(GetCurrentThreadId(), msg, 0, 0) } as isize;
         }
-        crate::control::SHOW | crate::control::HIDE => {
+        crate::control::SHOW | crate::control::HIDE | crate::control::QUIT => {
             unsafe {
                 PostThreadMessageW(
                     GetCurrentThreadId(),
-                    if msg == crate::control::SHOW {
-                        OPEN
-                    } else {
-                        msg
+                    match msg {
+                        crate::control::SHOW => OPEN,
+                        crate::control::QUIT => QUIT,
+                        _ => msg,
                     },
                     0,
                     0,
@@ -147,9 +118,11 @@ unsafe extern "system" fn messages(window: HWND, msg: u32, wp: WPARAM, lp: LPARA
         // В версии 4 клавиатура и средства доступности активируют значок через NIN_*.
         match lp as u16 as u32 {
             NIN_SELECT | KEY_SELECT | WM_LBUTTONUP | WM_LBUTTONDBLCLK => unsafe {
-                PostThreadMessageW(GetCurrentThreadId(), OPEN, 0, 0);
+                PostThreadMessageW(GetCurrentThreadId(), ACTIVATE_ICON, 0, 0);
             },
-            WM_CONTEXTMENU => context_menu(window, wp),
+            WM_CONTEXTMENU => unsafe {
+                PostThreadMessageW(GetCurrentThreadId(), CONTEXT_MENU, wp, 0);
+            },
             _ => {}
         }
         return 0;
@@ -203,7 +176,7 @@ pub fn install() -> io::Result<Tray> {
     }
 }
 
-fn light_taskbar() -> bool {
+pub fn light_taskbar() -> bool {
     use windows_sys::Win32::System::Registry::*;
     let mut value = 0u32;
     let mut size = 4;

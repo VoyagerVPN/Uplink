@@ -2,6 +2,7 @@
 mod avatar;
 mod network_window;
 mod setup_window;
+mod tray_menu;
 mod update_window;
 #[cfg(debug_assertions)]
 mod update_preview;
@@ -237,6 +238,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "--setup-ui") {
         std::process::exit(setup_window::run(&args[1..])?);
+    }
+    if let [flag, x, y, light] = args.as_slice()
+        && flag == "--tray-menu"
+    {
+        return tray_menu::run(x.parse()?, y.parse()?, light.parse()?);
     }
     let window = RoomWindow::new()?;
     let update = window.global::<UpdateUi>();

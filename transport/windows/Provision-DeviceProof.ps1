@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory)][string]$ZeroTierHome,
     [Parameter(Mandatory)][string]$UserSid
 )

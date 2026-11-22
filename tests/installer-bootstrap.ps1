@@ -1,6 +1,12 @@
 ﻿$ErrorActionPreference = 'Stop'
 Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $project = Split-Path $PSScriptRoot
+$parseErrors = $null
+$proofScript = Join-Path $project 'transport/windows/Provision-DeviceProof.ps1'
+# Windows PowerShell 5.1 читает скрипты без BOM в системной кодировке.
+$source = [IO.File]::ReadAllText($proofScript, [Text.Encoding]::GetEncoding(1251))
+$null = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$null, [ref]$parseErrors)
+if ($parseErrors.Count) { throw 'The device proof script does not parse in the installer PowerShell host' }
 $cache = Join-Path $project '.cache'
 $testRoot = Join-Path $cache ('installer-test-' + [guid]::NewGuid().ToString('N'))
 $oldData = $env:ProgramData
@@ -34,6 +40,7 @@ function Start-Service {
 function Start-Process {
     param($FilePath,$ArgumentList,$WindowStyle,[switch]$Wait,[switch]$PassThru)
     Assert ((Split-Path -Leaf $FilePath) -eq 'msiexec.exe' -and $WindowStyle -eq 'Hidden') 'Unexpected external process'
+    Assert (($ArgumentList -contains 'ZTHEADLESS=Yes') -eq [bool]$state.headless) 'Unexpected MSI desktop UI mode'
     $installMsi = [IO.Path]::GetFullPath($ArgumentList[1].Trim('"'))
     $trustedBase = [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'ZeroTier')) + [IO.Path]::DirectorySeparatorChar
     Assert ($installMsi -eq $state.verifiedMsi -and $installMsi.StartsWith($trustedBase,[StringComparison]::OrdinalIgnoreCase)) 'MSI path remains writable after signature verification'
@@ -61,7 +68,7 @@ function Run-Installer {
     $before = [Console]::In
     try {
         [Console]::SetIn([IO.StringReader]::new($invitation))
-        & (Join-Path $testRoot 'install-transport.ps1') -ReadInvitation
+        & (Join-Path $testRoot 'install-transport.ps1') -ReadInvitation -Headless:([bool]$state.headless)
     } finally { [Console]::SetIn($before) }
 }
 function Expect-Error([scriptblock]$action,[string]$pattern) {
@@ -83,6 +90,7 @@ try {
     Expect-Error { Run-Installer } '1603'
     Assert ($state.installCalls -eq 1) 'Initial MSI attempt missing'
     $state.msiExit = 0
+    $state.headless = $true
     $state.rejectProof = $true
     Expect-Error { Run-Installer } 'Proof setup interrupted'
     Assert ($state.installCalls -eq 2) 'Interrupted MSI setup was not retried'

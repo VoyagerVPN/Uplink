@@ -2,6 +2,12 @@
 
 Checked items record verified behavior. The early UX checks used the Windows client with a local network model. Later sections record tests with the live transport.
 
+## Release plan
+
+- **0.1.0** is the published Windows installer for joining existing instances.
+- **0.1.1** covers the current client, transport and server fixes, including HTTPS connection reuse during background sync.
+- **0.1.2** covers VPS setup from the Windows UI, from entering SSH credentials through creating the first network and receiving its invitation.
+
 ## Port of the approved HTML prototype to Rust
 
 - [x] At 388 × 540, the network rail starts at (20, 116). The first icon is 32 × 32 and icons are spaced 41 px apart. The plus and the invitation field's close icon are centered in the same column.
@@ -52,10 +58,11 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 - [x] Labels, tooltips, context menus and client messages use the language catalog. Additional catalogs appear in the selector after a build.
 
 - [x] The three green bars are embedded in the executable and appear as the window icon and title-bar mark.
-- [ ] Visually check the Explorer taskbar button thumbnail.
+- [x] Windows Explorer shows a live Uplink thumbnail on taskbar hover with the three green bars in its header and on the taskbar button.
 - [x] The tray remembers its mode: brand green, ping indicator or Windows theme. The tooltip reads “Uplink”.
+- [x] The Uplink tray menu previews the three icon modes and marks the current one. Icon and power changes update it in place while Explorer's hidden-icons panel remains open. The menu remains visible when the main Uplink window receives focus. Escape, clicking outside Uplink or clicking the tray icon again dismisses it. Opening the main window and quitting are separate actions.
 - [x] A neutral icon represents an unavailable measurement. All three modes were applied to the Explorer tray icon.
-- [ ] Manually check contrast on light and dark taskbars. Check the colors for good, moderate and high measured latency with the live transport.
+- [ ] Manually check contrast on a light taskbar and the colors for good, moderate and high measured latency with the live transport. On a dark taskbar, the green and Windows-theme icons were legible in the Explorer overflow. Demo ping mode displayed green bars for the 38 ms sample.
 - [x] Components and layouts can be edited directly. The library choice was evaluated with a real window displaying Cyrillic and a memory measurement.
 - [x] Compare the window and total working sets with the Win32 client while viewing a network and after closing the window.
 
@@ -111,12 +118,13 @@ Uplink is for private networks among friends. The project aims to publish the Wi
 - [x] Connect the invitation service, real virtual IPs, presence and nickname updates. Verified HTTPS invitations, pasting a link, Windows uplink:// registration, approval of a pending node, controller-assigned address, presence and propagation of a Windows nickname to a second API client.
 - [x] Check owner permissions on the server and propagate renames. Owners and admins could rename a network and an ordinary member was denied. A second node saw the new name. The previous owner was denied after transferring ownership.
 - [x] Measure server and peer latency separately from sample values. For real networks, the local row shows HTTPS /v1/ping time after TLS setup. Windows sends peer ICMP from the selected adapter's IP. Real responses were checked on two /24 networks. Gray bars mark a missing measurement.
+- [x] Reuse HTTPS connections across background sync cycles. With three saved memberships, a 50-second capture on the Windows client saw one TCP handshake to instance 129 at startup. A 50-second window starting ten seconds later saw zero new handshakes. A loopback TLS test also covers a server closing the connection between requests.
 - [ ] Verify an invitation between two installed Uplink clients. After joining, both should see the new membership and each other's addresses and exchange packets. An installed Windows client and a Linux ZeroTier node using the test API client passed. Two installed Uplink clients remain to be checked.
 
 ## Controls and title bar
 
 - [x] The custom title bar shows the Uplink mark and name. Minimize, restore and close to tray were verified.
-- [ ] Manually check dragging the title bar and Alt+F4. Dragging uses Slint's WindowMoveArea.
+- [x] Dragging the Slint title bar moves the window. Alt+F4 closes the window to the tray, and clicking the tray icon reopens it.
 - [x] An agent can read status, members and invitations as JSON, change the nickname, open and leave networks, select the tray icon and show or hide the window without a mouse.
 - [x] Commands return predictable exit codes and machine-readable errors. Changes appear in the open GUI and persist when it is reopened.
 
@@ -165,7 +173,16 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [x] Retry interrupted joins and revoke partially granted access after a password change. Limit login rate and concurrent password checks. SQLite contention returns HTTP 503 to the client.
 - [x] Complete an independent review, fix findings and rerun checks. At that checkpoint, 36 Rust tests passed, as did 18 server tests each on Windows and Linux. Failure and retry paths were checked with PowerShell 5.1 and 7. Windows build `87F21127-80FB3060-6542B3EC` was installed and all three executable hashes were verified with SHA-256.
 - [ ] Update instance 129, repeat password sign-in on two installed Windows clients, verify migration of the previous owner and exchange packets.
-- [ ] Verify first-time MSI installation on clean Windows.
+- [x] Install ZeroTier 1.16.2 on a second Windows PC without a previous ZeroTier service. The MSI ran in SSH session 0 with its headless feature and no reboot. Device proof provisioning resumed after correcting the script encoding for Windows PowerShell 5.1.
+- [x] Join the existing Uplink 129 network by invitation from the second Windows PC. Both ZeroTier nodes reported a direct LAN path and exchanged a UDP request and its matching response over their virtual addresses with the remote GUI stopped.
+- [ ] Characterize the first-join UDP burst before testing across different physical networks. During one join the two endpoint counters saw 454 packets to and from the provider address, including 320 UDP packets and one new TCP connection. The estimated combined rolling peak was 173 packets/s. A WAN-side measurement is still needed.
+- [x] Measure cold joins on one isolated controller interface. With Linux ZeroTier 1.16.2, one existing peer and a client reproducing the Windows API sequence, three fresh joins peaked at 58, 62 and 64 TCP+UDP packets in a rolling second. Waiting locally for the assigned IP before the first sync reduced nine sync/ping pairs to one and produced peaks of 48, 54 and 50. All six clients received a peer echo reply. These measurements cover the isolated Linux setup.
+- [x] Wait for a ready local IPv4 in the Rust Windows client after enrollment. On instance 129, one first join to a second network from a prepared Windows device completed in 14.18 s. The instance received one sync and one ping. The joining PC saw 46 TCP and 262 UDP packets to/from the public endpoint, one new TCP connection and one UDP flow already present during baseline. The public HTTPS proxy opened ten backend connections for ten API calls. The temporary membership was removed and the earlier network preserved.
+- [x] Send the first invitation redemption immediately and back off after pending enrollment (400 ms, 800 ms, up to 1.6 s within the 25 s retry budget). Rust tests cover the retry schedule and denied invitations. An isolated ZeroTier comparison recorded 12 versus 5 redemption requests and a working peer echo in both runs.
+- [ ] Compare the updated Windows client with the previous capture on instance 129 using the same headless peer. Record elapsed join time, API requests, external TCP SYNs, backend connections and peak combined TCP/UDP packets per second.
+- [x] Release the SQLite writer while waiting for a device to register and checking its signature. Repeat ticket validation before binding. Local parallel enrollment tests confirmed two independent admissions and a single winner for a shared invitation, including an isolated real ZeroTier controller.
+- [ ] If final controller writes are slow in practice, coordinate authorization with revocation and shared transport tag updates before moving those writes outside the SQLite transaction.
+- [ ] Verify an uninterrupted first-time MSI installation and device proof provisioning on another clean Windows system.
 
 
 ## Windows installer

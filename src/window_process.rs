@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows_sys::Win32::System::JobObjects::*;
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -16,6 +16,7 @@ pub fn executable() -> io::Result<PathBuf> {
 
 pub struct WindowProcess {
     child: Option<Child>,
+    menu: Option<Child>,
     job: OwnedHandle,
 }
 
@@ -39,7 +40,11 @@ impl WindowProcess {
             {
                 return Err(io::Error::last_os_error());
             }
-            Ok(Self { child: None, job })
+            Ok(Self {
+                child: None,
+                menu: None,
+                job,
+            })
         }
     }
 
@@ -62,7 +67,50 @@ impl WindowProcess {
                 return Ok(());
             }
         }
-        let mut child = Command::new(executable()?).spawn()?;
+        let child = self.spawn(&[])?;
+        CHILD_PID.store(child.id(), std::sync::atomic::Ordering::Relaxed);
+        self.child = Some(child);
+        Ok(())
+    }
+
+    pub fn open_tray_menu(&mut self, tray: &crate::tray::Tray, at: WPARAM) -> io::Result<()> {
+        if self.dismiss_menu()? {
+            return Ok(());
+        }
+        let at = tray.menu_anchor(at);
+        let child = self.spawn(&[
+            "--tray-menu".into(),
+            at.x.to_string(),
+            at.y.to_string(),
+            crate::tray::light_taskbar().to_string(),
+        ])?;
+        self.menu = Some(child);
+        Ok(())
+    }
+
+    pub fn activate_icon(&mut self) -> io::Result<()> {
+        if !self.dismiss_menu()? {
+            self.open()?;
+        }
+        Ok(())
+    }
+
+    fn dismiss_menu(&mut self) -> io::Result<bool> {
+        let Some(menu) = &mut self.menu else {
+            return Ok(false);
+        };
+        if menu.try_wait()?.is_some() {
+            self.menu = None;
+            return Ok(false);
+        }
+        if let Some(hwnd) = process_window(menu.id(), |title| !title.is_empty()) {
+            unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+        }
+        Ok(true)
+    }
+
+    fn spawn(&self, args: &[String]) -> io::Result<Child> {
+        let mut child = Command::new(executable()?).args(args).spawn()?;
         if unsafe { AssignProcessToJobObject(self.job.as_raw_handle(), child.as_raw_handle()) } == 0
         {
             let err = io::Error::last_os_error();
@@ -70,9 +118,7 @@ impl WindowProcess {
             let _ = child.wait();
             return Err(err);
         }
-        CHILD_PID.store(child.id(), std::sync::atomic::Ordering::Relaxed);
-        self.child = Some(child);
-        Ok(())
+        Ok(child)
     }
 
     pub fn close(&mut self) {
@@ -90,9 +136,16 @@ impl WindowProcess {
 struct WindowSearch {
     pid: u32,
     result: HWND,
+    matches_title: fn(&[u16]) -> bool,
 }
 
 pub fn visible_window(pid: u32) -> Option<HWND> {
+    process_window(pid, |title| {
+        title.iter().copied().eq("Uplink".encode_utf16())
+    })
+}
+
+fn process_window(pid: u32, matches_title: fn(&[u16]) -> bool) -> Option<HWND> {
     unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> i32 {
         let search = unsafe { &mut *(data as *mut WindowSearch) };
         let mut pid = 0;
@@ -103,9 +156,10 @@ pub fn visible_window(pid: u32) -> Option<HWND> {
             && unsafe { IsWindowVisible(hwnd) != 0 && GetWindow(hwnd, GW_OWNER).is_null() }
         {
             // Winit также создаёт видимое служебное окно без заголовка.
-            let mut title = [0u16; 8];
-            let length = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
-            if length != 6 || !title[..6].iter().copied().eq("Uplink".encode_utf16()) {
+            let mut title = [0u16; 64];
+            let length =
+                unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) } as usize;
+            if !(search.matches_title)(&title[..length]) {
                 return 1;
             }
             search.result = hwnd;
@@ -116,6 +170,7 @@ pub fn visible_window(pid: u32) -> Option<HWND> {
     let mut search = WindowSearch {
         pid,
         result: ptr::null_mut(),
+        matches_title,
     };
     unsafe {
         EnumWindows(Some(visit), (&mut search as *mut WindowSearch) as LPARAM);

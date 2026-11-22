@@ -134,21 +134,36 @@ class Invitations:
             info = self.directory(db, "/controller/network/" + network)
             return {k:info[k] for k in ("id","name","transport") if k in info}
 
+    def bound_invitation(self, db, token, node, key):
+        row = self.invitation(db, token)
+        if row["node"] and (row["node"] != node or key != row["session"]):
+            raise ApiError(403, "Invitation already used")
+        return row
+
     def redeem(self, token, node, session, nick, prior_session=None, proof=None):
         if not isinstance(node, str) or not re.fullmatch("[0-9a-f]{10}", node):
             raise ApiError(400, "Invalid node")
         key, nick = digest(session), nickname(nick)
         with self.transaction() as db:
-            row = self.invitation(db, token)
-            endpoint = "/controller/network/" + row["network"] + "/member"
-            if row["node"] and (row["node"] != node or key != row["session"]):
-                raise ApiError(403, "Invitation already used")
-            if node not in self.directory(db, endpoint):
-                raise ApiError(409, "Waiting for network join")
-            target = endpoint + "/" + node
+            row = self.bound_invitation(db, token, node, key)
+            network = row["network"]
+            group = groups.directory_group(db, network)
+            transport = group["transport"] if group else network
+        endpoint = f"/controller/network/{transport}/member"
+        if node not in self.transport(endpoint):
+            raise ApiError(409, "Waiting for network join")
+        verify = not row["device_verified"]
+        if verify:
+            identity = self.transport(endpoint + "/" + node).get("identity")
+            self.verify_device(identity, node, token, session, proof)
+
+        target = f"/controller/network/{network}/member/{node}"
+        with self.transaction() as db:
+            # За время проверки билет мог истечь, быть отозван или достаться другому узлу.
+            row = self.bound_invitation(db, token, node, key)
             member = self.directory(db, target)
-            if not row["device_verified"]:
-                self.verify_device(member.get("identity"), node, token, session, proof)
+            if not row["device_verified"] and (not verify or member.get("identity") != identity):
+                raise ApiError(403, "Device identity changed")
             if row["redeemed"] and not member["authorized"]:
                 raise ApiError(403, "Membership revoked")
             if not row["node"]:
@@ -179,7 +194,7 @@ class Invitations:
                 db.execute("UPDATE invitations SET device_verified=1 WHERE token=?", (row["token"],))
         # Сначала сохраняем привязку. Повтор после сбоя возможен только с той же сессией.
         with self.transaction() as db:
-            row = self.invitation(db, token)
+            row = self.bound_invitation(db, token, node, key)
             if not row["redeemed"]:
                 self.directory(db, target, {"authorized": True})
                 db.execute("UPDATE invitations SET redeemed=1, seen=? WHERE token=?",

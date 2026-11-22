@@ -157,23 +157,18 @@ msgstr "{} мс"
 msgid "Language"
 msgstr "Язык"
 
-msgctxt "native"
-msgid "Open Uplink"
-msgstr "Открыть Uplink"
+msgid "Uplink tray menu"
+msgstr "Меню Uplink"
 
-msgctxt "native"
-msgid "Icon: green"
-msgstr "Значок: зелёный"
+msgid "Tray icon"
+msgstr "Значок в трее"
 
-msgctxt "native"
-msgid "Icon: ping"
-msgstr "Значок: пинг"
+msgid "Green"
+msgstr "Зелёный"
 
-msgctxt "native"
-msgid "Icon: Windows theme"
-msgstr "Значок: по теме Windows"
+msgid "Windows theme"
+msgstr "Тема Windows"
 
-msgctxt "native"
 msgid "Quit Uplink"
 msgstr "Выйти из Uplink"
 

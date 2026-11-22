@@ -2,8 +2,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    fs,
-    io::{self, Write},
+    fs, io,
     os::windows::process::CommandExt,
     path::PathBuf,
     process::{Command, Stdio},
@@ -78,88 +77,89 @@ fn post(host: &str, endpoint: &str, body: Value) -> io::Result<Value> {
     request(host, endpoint, body).map(|(data, _)| data)
 }
 
+thread_local! {
+    // Поток фоновой синхронизации живёт между опросами. libcurl разделяет соединения по серверу.
+    static HTTPS: std::cell::RefCell<curl::easy::Easy> = std::cell::RefCell::new(curl::easy::Easy::new());
+}
+
 fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> {
-    let windows = std::env::var_os("SystemRoot")
-        .ok_or_else(|| io::Error::other("Windows directory unavailable"))?;
-    let mut child = Command::new(PathBuf::from(windows).join("System32/curl.exe"))
-        .args([
-            "-q",
-            "-sS",
-            "--proto",
-            "=https",
-            "--connect-timeout",
-            "4",
-            "--max-time",
-            "8",
-            "--max-filesize",
-            "262144",
-            "-H",
-            "Content-Type: application/json",
-            "--data-binary",
-            "@-",
-            "-w",
-            "\n%{http_code} %{time_pretransfer} %{time_starttransfer}",
-            &format!("https://{host}/v1/{endpoint}"),
-        ])
-        .creation_flags(0x08000000)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&serde_json::to_vec(&body)?)?;
-    let out = child.wait_with_output()?;
-    if !out.status.success() {
-        return Err(io::Error::other("Could not reach Uplink over HTTPS"));
-    }
-    let split = out
-        .stdout
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .ok_or_else(|| io::Error::other("Invalid HTTPS response"))?;
-    let metrics = std::str::from_utf8(&out.stdout[split + 1..]).map_err(io::Error::other)?;
-    let mut metrics = metrics.split_whitespace();
-    match metrics.next() {
-        Some("200") => {
-            let mut timing = || {
-                metrics
-                    .next()
-                    .and_then(|n| n.parse::<f64>().ok())
-                    .ok_or_else(|| io::Error::other("Invalid HTTPS timing"))
-            };
-            let sent = timing()?;
-            let received = timing()?;
-            Ok((
-                serde_json::from_slice(&out.stdout[..split])?,
-                ((received - sent).max(0.0) * 1000.0).round() as u32,
-            ))
-        }
-        Some("409")
-            if serde_json::from_slice::<Value>(&out.stdout[..split])
-                .ok()
-                .is_some_and(|v| v["error"] == "Network name already in use") =>
+    let body = serde_json::to_vec(&body)?;
+    let (status, response, latency) = HTTPS
+        .with_borrow_mut(|client| {
+            let result = send_https(client, host, endpoint, &body);
+            // Сбрасываем тело и заголовки в том числе при ошибке. Открытые соединения сохраняются.
+            client.reset();
+            result
+        })
+        .map_err(|_| io::Error::other("Could not reach Uplink over HTTPS"))?;
+
+    match status {
+        200 => Ok((serde_json::from_slice(&response)?, latency)),
+        409 if serde_json::from_slice::<Value>(&response)
+            .is_ok_and(|v| v["error"] == "Network name already in use") =>
         {
             Err(io::Error::other("Network name already in use"))
         }
-        Some("429") => Err(io::Error::other("Too many login attempts")),
-        Some("403") if endpoint == "login" => Err(io::Error::new(
+        429 => Err(io::Error::other("Too many login attempts")),
+        403 if endpoint == "login" => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Invalid network credentials",
         )),
-        Some("409") => Err(io::Error::new(
+        409 => Err(io::Error::new(
             io::ErrorKind::WouldBlock,
             "Waiting for network join",
         )),
-        Some("403") => Err(io::Error::new(
+        403 => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Invitation or membership denied",
         )),
         _ => Err(io::Error::other("Uplink API unavailable")),
     }
 }
+
+fn send_https(
+    client: &mut curl::easy::Easy,
+    host: &str,
+    endpoint: &str,
+    body: &[u8],
+) -> Result<(u32, Vec<u8>, u32), curl::Error> {
+    const MAX_RESPONSE: usize = 262_144;
+    client.url(&format!("https://{host}/v1/{endpoint}"))?;
+    client.connect_timeout(Duration::from_secs(4))?;
+    client.timeout(Duration::from_secs(8))?;
+    client.max_filesize(MAX_RESPONSE as u64)?;
+    client.follow_location(false)?;
+    #[cfg(test)]
+    https_tests::configure_tls(client)?;
+
+    let mut headers = curl::easy::List::new();
+    headers.append("Content-Type: application/json")?;
+    client.http_headers(headers)?;
+    client.post_fields_copy(body)?;
+    let mut response = Vec::new();
+    {
+        let mut transfer = client.transfer();
+        transfer.write_function(|chunk| {
+            if chunk.len() > MAX_RESPONSE - response.len() {
+                return Ok(0);
+            }
+            response.extend_from_slice(chunk);
+            Ok(chunk.len())
+        })?;
+        transfer.perform()?;
+    }
+    let latency = client
+        .starttransfer_time()?
+        .saturating_sub(client.pretransfer_time()?);
+    Ok((
+        client.response_code()?,
+        response,
+        (latency.as_secs_f64() * 1000.0).round() as u32,
+    ))
+}
+
+#[cfg(test)]
+mod https_tests;
 
 fn hex(value: &Value, length: usize) -> io::Result<String> {
     value
@@ -289,6 +289,50 @@ pub fn interface(id: &str) -> io::Result<Option<Value>> {
 pub fn attach(id: &str) -> io::Result<()> {
     zt(&["join", id]).map(|_| ())
 }
+
+fn retry_redeem(
+    mut redeem: impl FnMut() -> io::Result<Value>,
+    mut wait: impl FnMut(Duration) -> bool,
+) -> io::Result<Value> {
+    let mut delay = Duration::from_millis(400);
+    loop {
+        match redeem() {
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock && wait(delay) => {
+                delay = (delay * 2).min(Duration::from_millis(1600));
+            }
+            result => return result,
+        }
+    }
+}
+
+fn wait_for_virtual_ip(
+    deadline: Instant,
+    mut read: impl FnMut() -> io::Result<Option<Value>>,
+) -> io::Result<Value> {
+    loop {
+        if let Some(net) = read()?.filter(|net| assigned_ipv4(net).is_some()) {
+            return Ok(net);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Waiting for virtual IP",
+            ));
+        }
+        thread::sleep(remaining.min(Duration::from_millis(500)));
+    }
+}
+
+fn assigned_ipv4(net: &Value) -> Option<std::net::Ipv4Addr> {
+    if net["status"] != "OK" {
+        return None;
+    }
+    net["assignedAddresses"]
+        .as_array()?
+        .iter()
+        .find_map(|address| address.as_str()?.split_once('/')?.0.parse().ok())
+}
 pub fn detach(id: &str) -> io::Result<()> {
     if interface(id)?.is_some() {
         zt(&["leave", id])?;
@@ -402,38 +446,29 @@ impl Membership {
             .is_ok();
         if !resume {
             let proof = crate::device_proof::sign(&home()?, &self.node, token, &self.session)?;
-            loop {
-                match post(
-                    &self.host,
-                    "redeem",
-                    json!({"token":token,"node":self.node,"session":self.session,"nick":nick,"prior_session":prior,"proof":proof}),
-                ) {
-                    Err(e)
-                        if e.kind() == io::ErrorKind::WouldBlock
-                            && start.elapsed() < Duration::from_secs(25) =>
-                    {
-                        thread::sleep(Duration::from_millis(400))
+            let deadline = start + Duration::from_secs(25);
+            retry_redeem(
+                || {
+                    post(
+                        &self.host,
+                        "redeem",
+                        json!({"token":token,"node":self.node,"session":self.session,"nick":nick,"prior_session":prior,"proof":proof}),
+                    )
+                },
+                |delay| {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return false;
                     }
-                    result => {
-                        result?;
-                        break;
-                    }
-                }
-            }
+                    thread::sleep(delay.min(remaining));
+                    true
+                },
+            )?;
         }
-        loop {
-            self.refresh(nick)?;
-            if !self.own_ip.is_empty() {
-                return Ok(());
-            }
-            if start.elapsed() > Duration::from_secs(35) {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Waiting for virtual IP",
-                ));
-            }
-            thread::sleep(Duration::from_millis(500));
-        }
+        let net = wait_for_virtual_ip(start + Duration::from_secs(35), || {
+            interface(self.interface_id())
+        })?;
+        self.refresh_using(nick, |_| Ok(Some(net)))
     }
 
     pub fn manage(&self, action: &str, value: &str) -> io::Result<()> {
@@ -454,6 +489,14 @@ impl Membership {
     }
 
     pub fn refresh(&mut self, nick: &str) -> io::Result<()> {
+        self.refresh_using(nick, interface)
+    }
+
+    fn refresh_using(
+        &mut self,
+        nick: &str,
+        read_interface: impl FnOnce(&str) -> io::Result<Option<Value>>,
+    ) -> io::Result<()> {
         let mut snapshot = post(
             &self.host,
             "sync",
@@ -484,7 +527,7 @@ impl Membership {
         } else {
             None
         };
-        let net = interface(self.interface_id());
+        let net = read_interface(self.interface_id());
         let status = self.update_status(
             net.as_ref()
                 .ok()
@@ -520,15 +563,7 @@ impl Membership {
             self.own_ip.clear();
             return snapshot.map(|_| ());
         }
-        self.own_ip = net["assignedAddresses"]
-            .as_array()
-            .filter(|_| net["status"] == "OK")
-            .and_then(|ips| {
-                ips.iter().filter_map(Value::as_str).find_map(|s| {
-                    s.split_once('/')
-                        .and_then(|(ip, _)| ip.parse::<std::net::Ipv4Addr>().ok())
-                })
-            })
+        self.own_ip = assigned_ipv4(net)
             .map(|a| a.to_string())
             .unwrap_or_default();
         if let Ok(data) = &snapshot {
@@ -565,6 +600,75 @@ impl Membership {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invitation_pending_at_two_seconds_uses_four_requests() {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut attempts = 0;
+        let result = retry_redeem(
+            || {
+                attempts += 1;
+                if elapsed.get() < Duration::from_secs(2) {
+                    Err(io::ErrorKind::WouldBlock.into())
+                } else {
+                    Ok(json!({"id":"joined"}))
+                }
+            },
+            |delay| {
+                elapsed.set(elapsed.get() + delay);
+                true
+            },
+        );
+        assert_eq!(result.unwrap()["id"], "joined");
+        assert_eq!(attempts, 4);
+    }
+
+    #[test]
+    fn slow_controller_stops_at_the_retry_budget() {
+        let mut pauses = Vec::new();
+        let pending = retry_redeem(
+            || Err(io::ErrorKind::WouldBlock.into()),
+            |delay| {
+                pauses.push(delay.as_millis());
+                pauses.len() < 5
+            },
+        );
+        assert_eq!(pending.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(pauses, [400, 800, 1600, 1600, 1600]);
+        let denied = retry_redeem(
+            || Err(io::ErrorKind::PermissionDenied.into()),
+            |_| panic!("a rejected invitation must not be retried"),
+        );
+        assert_eq!(denied.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn join_waits_for_a_ready_local_ipv4() {
+        let ready = json!({"status":"OK","assignedAddresses":["fd00::1/64","10.3.4.5/24"]});
+        let mut samples = [
+            None,
+            Some(json!({"status":"REQUESTING_CONFIGURATION","assignedAddresses":["10.3.4.5/24"]})),
+            Some(json!({"status":"OK","assignedAddresses":["fd00::1/64"]})),
+            Some(ready.clone()),
+        ]
+        .into_iter();
+        let interface = wait_for_virtual_ip(Instant::now() + Duration::from_secs(10), || {
+            Ok(samples.next().expect("unexpected extra poll"))
+        })
+        .unwrap();
+        assert_eq!(interface, ready);
+    }
+
+    #[test]
+    fn virtual_ip_wait_distinguishes_timeout_from_a_failed_local_query() {
+        let now = Instant::now();
+        assert_eq!(
+            wait_for_virtual_ip(now, || Ok(None)).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        let failed = wait_for_virtual_ip(now, || Err(io::ErrorKind::BrokenPipe.into()));
+        assert_eq!(failed.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
 
     #[test]
     fn https_outage_keeps_adapter_ip_and_rechecks_cached_peers() {
