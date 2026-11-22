@@ -6,18 +6,13 @@ Write release notes in English for people who use Uplink. Group changes by what 
 
 Starting with 0.1.2, maintain one file per version in `release/notes/`. Add an entry when a change is ready to ship. The GitHub release and the in-app update dialog use the same approved text from this file.
 
-Use these level-two headings in order, including only categories with entries. This adapts [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for the update dialog.
+Group entries by where people will notice the change. Reuse these level-two headings across releases: **🌐 Networks** for joining, invitations and connections, **🖥️ Interface** for shared window and tray controls, **🔄 Updates** for discovering, reading about and installing updates, and **🛠️ For server owners** for running an instance. Use only the areas affected, with the most important one first. A new area can get its own heading when it helps readers find an entry.
 
-| Heading | What belongs here |
-| --- | --- |
-| ✨ Added | Something a user can now do |
-| 🔄 Changed | A change to how an existing feature works |
-| ⏳ Deprecated | A feature scheduled for removal and what to use instead |
-| 🗑️ Removed | A feature that is gone and any action users need to take |
-| 🐛 Fixed | A problem users could encounter and the corrected behavior |
-| 🔒 Security | A security issue addressed by this update and any action required |
+Give each outcome one home. A visual fix specific to the update dialog belongs under Updates. A change to focus indicators throughout the app belongs under Interface. New features and fixes can share a section: start with what people can now do or name the problem that was corrected. Call out any required action or security impact in the relevant bullet.
 
-Use one short bullet per user-visible outcome. Combine related commits and leave out merges, internal refactors and routine maintenance. If a change affects only people running a server, begin its bullet with “For server owners”. Keep plans in the roadmap. GitHub already displays the version and publication date.
+Write one short bullet per outcome. Combine related commits, and keep plans in the roadmap. GitHub already displays the version and publication date.
+
+## Prepare a release
 
 After pushing the reviewed sources, run `./release/draft.ps1 -Version X.Y.Z` on the Windows publisher account. This tests the client, builds the NSIS installer, signs the release manifest using the publisher’s Windows CNG key, and uploads a GitHub **draft**. Client devices only need the embedded public key.
 
