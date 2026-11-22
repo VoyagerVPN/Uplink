@@ -463,3 +463,99 @@ fn update_ring_renders_intermediate_frames_and_stops_at_the_reported_progress() 
     let rotating: Vec<_> = (0..12).map(|i| frame(430+i*16)).collect();
     assert!(rotating.windows(2).all(|w| w[0]!=w[1]), "Дуга проверки перестала вращаться");
 }
+
+#[test]
+fn long_release_notes_scroll_beside_the_text() {
+    use slint::platform::PointerEventButton;
+
+    let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    platform::set_platform(Box::new(TestDesktop {
+        surface: surface.clone(),
+        time_ms: Rc::new(Cell::new(10)),
+    }))
+    .unwrap();
+    let ui = RoomWindow::new().unwrap();
+    let update = ui.global::<UpdateUi>();
+    update.set_phase(UpdatePhase::Ready);
+    update.set_target("0.1.1".into());
+    let notes: Vec<_> = include_str!("../release/notes/v0.1.1.md")
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| ReleaseNote {
+            heading: line.starts_with("## "),
+            text: line.trim_start_matches("## ").into(),
+            bullet: false,
+        })
+        .collect();
+    update.set_notes(slint::ModelRc::new(slint::VecModel::from(notes)));
+    update.set_dialog_open(true);
+    ui.show().unwrap();
+    surface.set_size(PhysicalSize::new(388, 540));
+    let render = || {
+        let mut pixels = vec![Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|renderer| {
+            renderer.render(&mut pixels, 388);
+        });
+        pixels
+    };
+    let thumb = |image: &[Rgb8Pixel]| {
+        (135..405).find(|&y| {
+            (330..348).any(|x| {
+                let p = image[y * 388 + x];
+                (p.r, p.g, p.b) == (104, 110, 118)
+            })
+        })
+    };
+    let top = render();
+    let y = thumb(&top).expect("Long notes should have a thumb");
+    let x = (330..348)
+        .find(|&x| {
+            let p = top[(y + 3) * 388 + x];
+            (p.r, p.g, p.b) == (104, 110, 118)
+        })
+        .unwrap();
+    for line in 145..390 {
+        for col in x - 7..x - 2 {
+            let p = top[line * 388 + col];
+            assert_eq!(
+                (p.r, p.g, p.b),
+                (32, 34, 37),
+                "Text overlaps the scrollbar gutter"
+            );
+        }
+    }
+    ui.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: LogicalPosition::new(120., 200.),
+        delta_x: 0.,
+        delta_y: -52.,
+    });
+    let after_wheel = render();
+    assert!(thumb(&after_wheel).unwrap() > y);
+    let button = PointerEventButton::Left;
+    let start = LogicalPosition::new(x as f32, (thumb(&after_wheel).unwrap() + 5) as f32);
+    let end = LogicalPosition::new(x as f32, 120.);
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position: start,
+        button,
+    });
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: end });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position: end,
+        button,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerExited);
+    assert_eq!(
+        thumb(&render()),
+        Some(y),
+        "Dragging the handle back to the top"
+    );
+    update.set_notes(slint::ModelRc::new(slint::VecModel::from(vec![
+        ReleaseNote {
+            text: "Short note".into(),
+            ..Default::default()
+        },
+    ])));
+    assert!(thumb(&render()).is_none());
+}

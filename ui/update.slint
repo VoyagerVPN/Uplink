@@ -1,5 +1,4 @@
 import { Label, HintCard, Action, ButtonFocus } from "controls.slint";
-import { ScrollView } from "std-widgets.slint";
 
 export enum UpdatePhase { idle, checking, current, found, loading, verifying, ready, restarting, updated, offline, invalid, install-failed }
 export struct ReleaseNote { text: string, heading: bool, bullet: bool }
@@ -98,6 +97,51 @@ export component UpdateHeader inherits HorizontalLayout {
     }
 }
 
+component ReleaseNotes inherits Rectangle {
+    clip: true;
+    preferred-height: min(260px, items.preferred-height);
+    height: self.preferred-height;
+    property <length> overflow: max(0px, view.content-height - view.height);
+    function scroll-to(offset: length) {
+        view.content-y = -clamp(offset, 0px, root.overflow);
+    }
+    view := Flickable {
+        x: 0; width: parent.width - 16px; height: parent.height;
+        content-width: self.width;
+        content-height: items.preferred-height;
+        items := VerticalLayout {
+            width: view.width; height: self.preferred-height; spacing: 8px;
+            for note in UpdateUi.notes: HorizontalLayout { spacing: 6px;
+                if note.bullet: Label { width: 10px; text: "•"; color: #92999f; vertical-alignment: top; }
+                Text { horizontal-stretch: 1; text: note.text; wrap: word-wrap; font-size: 13px; font-weight: note.heading ? 600 : 400; color: note.heading ? #eff0f2 : #d0d3d7; }
+            }
+        }
+    }
+    if root.overflow > 0px: track := TouchArea {
+        x: parent.width - self.width; width: 12px; height: parent.height;
+        property <length> grab-offset;
+        property <length> travel: self.height - thumb.height;
+        function seek(y: length) {
+            root.scroll-to((y - self.grab-offset) / max(1px, self.travel) * root.overflow);
+        }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+                self.grab-offset = self.mouse-y >= thumb.y && self.mouse-y <= thumb.y + thumb.height
+                    ? self.mouse-y - thumb.y : thumb.height / 2;
+                self.seek(self.mouse-y);
+            }
+        }
+        moved => { if self.pressed { self.seek(self.mouse-y); } }
+        scroll-event(e) => { root.scroll-to(-view.content-y - e.delta-y); return accept; }
+        thumb := Rectangle {
+            width: 4px; height: clamp(track.height * (view.height / view.content-height), 24px, track.height);
+            y: track.travel * clamp(-view.content-y / max(1px, root.overflow), 0, 1);
+            border-radius: 2px;
+            background: track.pressed ? #bfec70 : track.has-hover ? #949aa2 : #686e76;
+        }
+    }
+}
+
 export component UpdateDialog inherits FocusScope {
     accessible-role: groupbox;
     accessible-label: UpdateUi.title;
@@ -113,15 +157,7 @@ export component UpdateDialog inherits FocusScope {
                 Action { width: 28px; height: 28px; title-button: true; caption: "×"; accessible-label: @tr("Close"); invoked => { UpdateUi.dialog-open = false; } }
             }
             if !UpdateUi.readable: Label { text: UpdateUi.hint; height: 28px; color: #b9bdc3; }
-            if UpdateUi.readable: ScrollView {
-                height: min(260px, items.preferred-height);
-                items := VerticalLayout { spacing: 8px;
-                    for note in UpdateUi.notes: HorizontalLayout { spacing: 6px;
-                        if note.bullet: Label { width: 10px; text: "•"; color: #92999f; vertical-alignment: top; }
-                        Text { horizontal-stretch: 1; text: note.text; wrap: word-wrap; font-size: 13px; font-weight: note.heading ? 600 : 400; color: note.heading ? #eff0f2 : #d0d3d7; }
-                    }
-                }
-            }
+            if UpdateUi.readable: ReleaseNotes {}
             if UpdateUi.readable: HorizontalLayout { height: 32px; alignment: end;
                 Action { primary: true; height: 32px;
                     available: UpdateUi.phase == UpdatePhase.ready || UpdateUi.phase == UpdatePhase.found;

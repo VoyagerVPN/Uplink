@@ -6,7 +6,8 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 
 - **0.1.0** is the published Windows installer for joining existing instances.
 - **0.1.1** covers the current client, transport and server fixes, including HTTPS connection reuse during background sync.
-- **0.1.2** covers VPS setup from the Windows UI, from entering SSH credentials through creating the first network and receiving its invitation.
+- **0.1.2** gives release notes a compact scrollbar with a dedicated gutter.
+- **0.2.0** covers VPS setup from the Windows UI, from entering SSH credentials through creating the first network and receiving its invitation.
 
 ## Port of the approved HTML prototype to Rust
 
