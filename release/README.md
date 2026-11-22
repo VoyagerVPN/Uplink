@@ -6,11 +6,11 @@ Write release notes in English for people who use Uplink. Group changes by what 
 
 Starting with 0.1.2, maintain one file per version in `release/notes/`. Add an entry when a change is ready to ship. The GitHub release and the in-app update dialog use the same approved text from this file.
 
-Group entries by where people will notice the change. Reuse these level-two headings across releases: **🌐 Networks** for joining, invitations and connections, **🖥️ Interface** for shared window and tray controls, **🔄 Updates** for discovering, reading about and installing updates, and **🛠️ For server owners** for running an instance. Use only the areas affected, with the most important one first. A new area can get its own heading when it helps readers find an entry.
+Group entries by where people will notice the change. Use `## 🖥️ UI` for windows, dialogs and tray controls, `## 🌐 Net` for joining, invitations and connections, and `## 🛠️ For server owners` for operating an instance. Include only the areas affected, most important first.
 
-Give each outcome one home. A visual fix specific to the update dialog belongs under Updates. A change to focus indicators throughout the app belongs under Interface. New features and fixes can share a section: start with what people can now do or name the problem that was corrected. Call out any required action or security impact in the relevant bullet.
+Start each entry with **✦ New** for a new capability, **↻ Changed** for a change in existing behavior, or **✓ Fixed** for a resolved problem. Follow the label with an em dash and one short sentence. Put each entry on one line with a blank line between entries. The symbol serves as its bullet in both GitHub and the app.
 
-Write one short bullet per outcome. Combine related commits, and keep plans in the roadmap. GitHub already displays the version and publication date.
+Give each outcome one entry. Mention any required action, replacement for a removed feature, or security impact in that entry. Keep plans in the roadmap. GitHub already displays the version and publication date.
 
 ## Prepare a release
 
