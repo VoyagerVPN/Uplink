@@ -28,6 +28,8 @@ pub struct InviteMethods {
     pub qr: bool,
     #[serde(default)]
     pub password: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_revision: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -115,10 +117,25 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
             io::ErrorKind::WouldBlock,
             "Waiting for network join",
         )),
-        403 => Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Invitation or membership denied",
-        )),
+        403 => {
+            let body = serde_json::from_slice::<Value>(&response).unwrap_or(Value::Null);
+            let reason = match body["error"].as_str() {
+                Some(
+                    s @ ("Invalid or expired invitation"
+                    | "Invitation already used"
+                    | "Invalid device proof"
+                    | "Device proof required"
+                    | "Membership revoked"
+                    | "Existing device session required"
+                    | "Node already enrolled"),
+                ) => s,
+                _ => "Invitation or membership denied",
+            };
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                reason.to_owned(),
+            ))
+        }
         _ => Err(io::Error::other("Uplink API unavailable")),
     }
 }
@@ -191,7 +208,32 @@ pub fn password_invite(host: &str, name: &str, password: &str) -> io::Result<Str
 }
 
 fn device_is_prepared(home: &std::path::Path) -> bool {
-    home.join("zerotier-one_x64.exe").is_file() && home.join("uplink-proof/certificate").is_file()
+    let proof = home.join("uplink-proof");
+    home.join("zerotier-one_x64.exe").is_file()
+        && ["certificate", "delegate.public", "delegate.secret"]
+            .iter()
+            .all(|name| {
+                fs::File::open(proof.join(name))
+                    .and_then(|file| file.metadata())
+                    .is_ok_and(|info| info.is_file() && info.len() > 0)
+            })
+}
+
+#[cfg(test)]
+#[test]
+fn incomplete_device_proof_is_prepared_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let proof = home.join("uplink-proof");
+    fs::create_dir(&proof).unwrap();
+    fs::write(home.join("zerotier-one_x64.exe"), b"fixture").unwrap();
+    fs::write(proof.join("certificate"), b"certificate").unwrap();
+    assert!(!device_is_prepared(home));
+    fs::write(proof.join("delegate.public"), b"public").unwrap();
+    fs::write(proof.join("delegate.secret"), b"").unwrap();
+    assert!(!device_is_prepared(home));
+    fs::write(proof.join("delegate.secret"), b"private fixture").unwrap();
+    assert!(device_is_prepared(home));
 }
 
 fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result<()> {
@@ -227,18 +269,33 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
     .join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let result = Command::new(ps)
         .args(["-NoProfile","-NonInteractive","-Command",
-            "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $p=Start-Process -FilePath $env:UPLINK_NETWORK_HELPER -Verb RunAs -ArgumentList ('prepare '+$sid+' '+$env:UPLINK_NETWORK_REQUEST) -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode"])
+            "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; try { $p=Start-Process -FilePath $env:UPLINK_NETWORK_HELPER -Verb RunAs -ArgumentList ('prepare '+$sid+' '+$env:UPLINK_NETWORK_REQUEST) -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { if ($_.Exception.GetBaseException().NativeErrorCode -eq 1223) {exit 38}; exit 2 }"])
         .env("UPLINK_NETWORK_HELPER",helper).env("UPLINK_NETWORK_REQUEST",request)
         .creation_flags(0x08000000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
     drop(guard);
     let _ = fs::remove_dir(root);
     if !result.success() {
-        return Err(io::Error::other("Network setup was not completed."));
+        return Err(io::Error::other(match result.code() {
+            Some(31) => "Could not get the ZeroTier configuration from the server.",
+            Some(32) => "The existing ZeroTier installation could not be used safely.",
+            Some(33) => "Could not download the ZeroTier installer.",
+            Some(34) => "Could not verify or install the ZeroTier package.",
+            Some(35) => "The local ZeroTier service could not be prepared.",
+            Some(36) => "Could not prepare device verification for this Windows account.",
+            Some(37) => "Network setup requires elevation with the same Windows account.",
+            Some(38) => "Windows permission to prepare ZeroTier was cancelled.",
+            _ => "Network setup was not completed.",
+        }));
     }
     Ok(())
 }
 
-pub fn bootstrap(host: &str, token: &str, allow_setup_prompt: bool) -> io::Result<Membership> {
+pub fn bootstrap(
+    host: &str,
+    token: &str,
+    allow_setup_prompt: bool,
+    progress: &dyn Fn(crate::settings::JoinStage),
+) -> io::Result<Membership> {
     let home = home()?;
     if !allow_setup_prompt && !device_is_prepared(&home) {
         return Err(io::Error::other(
@@ -252,6 +309,7 @@ pub fn bootstrap(host: &str, token: &str, allow_setup_prompt: bool) -> io::Resul
     if !(100..=65536).contains(&planet.len()) {
         return Err(io::Error::other("Invalid ZeroTier root"));
     }
+    progress(crate::settings::JoinStage::Device);
     if allow_setup_prompt {
         prepare_device(&home, host, token)?;
     }
@@ -444,11 +502,13 @@ impl Membership {
         prefs: &std::path::Path,
         returning: bool,
         prior: Option<&str>,
+        progress: &dyn Fn(crate::settings::JoinStage),
     ) -> io::Result<()> {
         if interface(self.interface_id())?.is_none() {
             attach(self.interface_id())?;
         }
         let start = Instant::now();
+        progress(crate::settings::JoinStage::Approval);
         let resume = returning
             && post(
                 &self.host,
@@ -477,13 +537,14 @@ impl Membership {
                 },
             )?;
         }
+        progress(crate::settings::JoinStage::Address);
         let net = wait_for_virtual_ip(start + Duration::from_secs(35), || {
             interface(self.interface_id())
         })?;
         self.refresh_using(nick, prefs, |_| Ok(Some(net)))
     }
 
-    pub fn manage(&self, action: &str, value: &str) -> io::Result<()> {
+    pub fn manage(&self, action: &str, value: &str) -> io::Result<Value> {
         post(
             &self.host,
             if action == "avatar" {
@@ -493,7 +554,6 @@ impl Membership {
             },
             json!({"session":self.session,"action":action,"value":value}),
         )
-        .map(|_| ())
     }
     pub fn share(&self) -> io::Result<String> {
         let response = post(&self.host, "share", json!({"session":self.session}))?;

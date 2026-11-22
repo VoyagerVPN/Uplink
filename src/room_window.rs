@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 mod avatar;
 mod network_window;
+mod placement;
 mod setup_window;
 mod tray_menu;
 #[cfg(debug_assertions)]
@@ -102,6 +103,8 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
     ui.set_joined(!rooms.is_empty());
     if rooms.is_empty() {
         net.set_server("".into());
+        net.set_password("".into());
+        net.set_password_on(false);
     }
     net.set_live(rooms.first().is_some_and(|r| r.live.is_some()));
     if rooms
@@ -136,7 +139,11 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
         net.set_link_on(!room.policy.link_disabled);
         net.set_qr_on(room.policy.qr);
         net.set_password_on(room.policy.password.is_some());
-        net.set_password(room.policy.password.clone().unwrap_or_default().into());
+        if net.get_live() && net.get_panel() == "methods" {
+            net.invoke_load_password();
+        } else {
+            net.set_password(room.policy.password.clone().unwrap_or_default().into());
+        }
         if net.get_modal() == "invite" {
             let method = net.get_method();
             if !match method.as_str() {
@@ -168,7 +175,6 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
                 .collect::<Vec<_>>(),
         )));
     } else {
-        ui.set_adding_network(false);
         ui.set_invite_url("".into());
         ui.set_room_name("".into());
         ui.set_members(ModelRc::default());
@@ -218,11 +224,92 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
     ui.set_rooms(ModelRc::new(VecModel::from(rows)));
 }
 
+fn open_pending_invite(ui: &RoomWindow, path: &Path) {
+    if ui.global::<NetworkUi>().get_joining() {
+        return;
+    }
+    match settings::take_invite(path) {
+        Ok(Some(link)) => {
+            ui.set_settings_open(false);
+            ui.global::<NetworkUi>().set_panel("".into());
+            ui.global::<NetworkUi>().invoke_close_modal();
+            ui.global::<NetworkUi>().set_credentials(false);
+            ui.set_pending_link(link.as_str().into());
+            ui.set_adding_network(true);
+            ui.invoke_join_room(link.into());
+        }
+        Err(e) => show_error(ui, e),
+        Ok(None) => {}
+    }
+}
+
+fn start_join(
+    ui: &RoomWindow,
+    path: &Path,
+    join: impl FnOnce(&Path, &dyn Fn(settings::JoinStage)) -> io::Result<()> + Send + 'static,
+) {
+    use std::io::Write;
+    let net = ui.global::<NetworkUi>();
+    if net.get_joining() {
+        return;
+    }
+    ui.set_error("".into());
+    net.set_error("".into());
+    net.set_join_step(settings::JoinStage::Access as i32);
+    net.set_joining(true);
+    let weak = ui.as_weak();
+    let path = path.to_owned();
+    std::thread::spawn(move || {
+        let log = std::cell::RefCell::new(path.parent().and_then(|p| {
+            std::fs::create_dir_all(p).ok()?;
+            std::fs::File::create(p.join("last-join.log")).ok()
+        }));
+        let record = |message: &str| {
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if let Some(file) = log.borrow_mut().as_mut() {
+                let _ = writeln!(file, "{time} {message}");
+            }
+        };
+        let last_step = std::cell::Cell::new(0);
+        let progress = |step: settings::JoinStage| {
+            if last_step.replace(step as i32) == step as i32 {
+                return;
+            }
+            record(match step {
+                settings::JoinStage::Access => "stage=access",
+                settings::JoinStage::Device => "stage=device",
+                settings::JoinStage::Approval => "stage=approval",
+                settings::JoinStage::Address => "stage=address",
+            });
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                ui.global::<NetworkUi>().set_join_step(step as i32)
+            });
+        };
+        let result = join(&path, &progress);
+        match &result {
+            Ok(()) => record("result=ok"),
+            Err(e) => record(&format!(
+                "result=failed reason={}",
+                uplink::i18n::error_message("en", &e.to_string())
+            )),
+        }
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.global::<NetworkUi>().set_joining(false);
+            finish_room_change(&ui, &path, result);
+            open_pending_invite(&ui, &path);
+        });
+    });
+}
+
 fn finish_room_change(ui: &RoomWindow, prefs: &Path, result: io::Result<()>) {
     match result.and_then(|()| settings::rooms(prefs)) {
         Ok(rooms) => {
             apply_rooms(ui, rooms);
             ui.set_adding_network(false);
+            ui.set_pending_link("".into());
             ui.set_error("".into());
             uplink::control::refresh_tray_icon();
         }
@@ -256,6 +343,7 @@ fn show_error(ui: &RoomWindow, error: io::Error) {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "--setup-ui") {
+        placement::configure([388, 252])?;
         std::process::exit(setup_window::run(&args[1..])?);
     }
     if let [flag, x, y, light] = args.as_slice()
@@ -263,6 +351,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         return tray_menu::run(x.parse()?, y.parse()?, light.parse()?);
     }
+    placement::configure([388, 540])?;
     let window = RoomWindow::new()?;
     let update = window.global::<UpdateUi>();
     update.set_version(env!("CARGO_PKG_VERSION").into());
@@ -304,7 +393,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let nickname = settings::nickname(&path, &peers::windows_name())?;
     window.set_nickname(nickname.as_str().into());
     if let Some(url) = args.first() {
-        settings::join(&path, url)?;
+        settings::queue_invite(&path, url)?;
     }
     apply_rooms(&window, settings::rooms(&path)?);
     let weak = window.as_weak();
@@ -379,18 +468,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let prefs = path.clone();
     window.on_join_room(move |url| {
         let Some(ui) = weak.upgrade() else { return };
-        if invite::instance_link(&url).is_some() {
-            let weak = ui.as_weak();
-            let path = prefs.as_ref().clone();
-            let link = url.to_string();
-            std::thread::spawn(move || {
-                let result = settings::join(&path, &link);
-                let _ =
-                    weak.upgrade_in_event_loop(move |ui| finish_room_change(&ui, &path, result));
-            });
-        } else {
-            finish_room_change(&ui, &prefs, settings::join(&prefs, &url));
-        }
+        let url = url.to_string();
+        start_join(&ui, &prefs, move |path, progress| {
+            settings::join_with_progress(path, &url, true, progress)
+        });
     });
     let weak = window.as_weak();
     let prefs = path.clone();
@@ -400,6 +481,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let refresh_path = path.as_ref().clone();
+    let startup_path = path.clone();
     let weak = window.as_weak();
     window.on_leave_room(move || {
         if let Some(ui) = weak.upgrade() {
@@ -411,6 +493,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     window.on_copy(|value| clipboard_win::set_clipboard_string(value.as_str()).is_ok());
+    let closing = window.as_weak();
+    window.window().on_close_requested(move || {
+        if let Some(ui) = closing.upgrade()
+            && ui.global::<NetworkUi>().get_joining()
+        {
+            ui.window().set_minimized(true);
+            return slint::CloseRequestResponse::KeepWindowShown;
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
     window.on_dismiss(|| {
         let _ = slint::quit_event_loop();
     });
@@ -428,9 +520,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     uplink::startup::enabled()?,
                 ))
             })();
+            let inbox = refresh_path.clone();
             if weak
                 .upgrade_in_event_loop(move |ui| match result {
                     Ok((nick, rooms, options, language, autostart)) => {
+                        open_pending_invite(&ui, &inbox);
                         apply_language(&ui, &language);
                         apply_options(&ui, options, autostart);
                         if ui.get_editing()
@@ -445,7 +539,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_editing(false);
                         ui.set_nickname(nick.into());
                         apply_rooms(&ui, rooms);
-                        ui.set_error("".into());
                     }
                     Err(e) => show_error(&ui, e),
                 })
@@ -455,6 +548,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    open_pending_invite(&window, &startup_path);
     window.run()?;
     Ok(())
 }

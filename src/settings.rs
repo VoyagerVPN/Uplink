@@ -1,6 +1,10 @@
 use serde_json::Value;
 mod network;
-pub use network::{Policy, join_credentials, join_on_server, network_action};
+mod password;
+pub use network::network_password;
+pub use network::{
+    Policy, join_credentials, join_on_server, join_on_server_with_progress, network_action,
+};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -272,21 +276,77 @@ fn select_url(prefs: &mut Value, url: &str, allow_join: bool) -> io::Result<()> 
     Ok(())
 }
 
+pub fn queue_invite(path: &Path, url: &str) -> io::Result<()> {
+    if !crate::invite::accepts_invite(url) {
+        return Err(io::Error::other("Unknown invitation"));
+    }
+    update(path, |prefs| {
+        let mut queued: Vec<String> = serde_json::from_value(
+            prefs
+                .get("launch_invites")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )?;
+        let url = url.trim();
+        if !queued.iter().any(|item| item == url) {
+            if queued.len() >= 16 {
+                return Err(io::Error::other("Too many pending invitations"));
+            }
+            queued.push(url.to_owned());
+        }
+        prefs["launch_invites"] = serde_json::to_value(queued)?;
+        Ok(())
+    })
+}
+
+pub fn take_invite(path: &Path) -> io::Result<Option<String>> {
+    if read(path)?.get("launch_invites").is_none() {
+        return Ok(None);
+    }
+    let mut next = None;
+    update(path, |prefs| {
+        if let Some(items) = prefs["launch_invites"].as_array_mut() {
+            if !items.is_empty() {
+                next = items.remove(0).as_str().map(str::to_owned);
+            }
+            if items.is_empty() {
+                prefs.as_object_mut().unwrap().remove("launch_invites");
+            }
+        }
+        Ok(())
+    })?;
+    Ok(next)
+}
+
+#[derive(Clone, Copy)]
+pub enum JoinStage {
+    Access = 1,
+    Device,
+    Approval,
+    Address,
+}
+
 pub fn join(path: &Path, url: &str) -> io::Result<()> {
-    join_with_setup(path, url, true)
+    join_with_progress(path, url, true, &|_| {})
 }
 
 pub fn join_headless(path: &Path, url: &str) -> io::Result<()> {
-    join_with_setup(path, url, false)
+    join_with_progress(path, url, false, &|_| {})
 }
 
-fn join_with_setup(path: &Path, url: &str, allow_setup_prompt: bool) -> io::Result<()> {
+pub fn join_with_progress(
+    path: &Path,
+    url: &str,
+    allow_setup_prompt: bool,
+    progress: &dyn Fn(JoinStage),
+) -> io::Result<()> {
+    progress(JoinStage::Access);
     if let Some((host, token)) = crate::invite::instance_link(url) {
         let _guard = transport_lock(path)?;
         if !options(path)?.enabled {
             return Err(io::Error::other("Uplink is disabled"));
         }
-        let mut live = crate::transport::bootstrap(host, token, allow_setup_prompt)?;
+        let mut live = crate::transport::bootstrap(host, token, allow_setup_prompt, progress)?;
         let key = live.key();
         let existing = crate::transport::interface(live.interface_id())?.is_some();
         let prefs = read(path)?;
@@ -326,6 +386,7 @@ fn join_with_setup(path: &Path, url: &str, allow_setup_prompt: bool) -> io::Resu
             path,
             returning,
             prior.as_ref().map(|r| r.session.as_str()),
+            progress,
         ) {
             if !existing && !known && prior.is_none() {
                 crate::transport::detach(live.interface_id())?;
@@ -370,6 +431,9 @@ pub fn leave(path: &Path, target: Option<&str>) -> io::Result<()> {
                 }
             }
             let removed = target.to_owned();
+            if let Some(entries) = prefs["saved_passwords"].as_object_mut() {
+                entries.remove(target);
+            }
             urls.retain(|url| url != &removed);
         }
         let saved = serde_json::json!(urls);
@@ -655,6 +719,29 @@ fn update(path: &Path, change: impl FnOnce(&mut Value) -> io::Result<()>) -> io:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_invitations_are_validated_deduplicated_and_taken_once_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        assert!(queue_invite(&path, "not an invitation").is_err());
+        for url in [
+            crate::invite::COOP,
+            crate::invite::COOP,
+            crate::invite::ARENA,
+        ] {
+            queue_invite(&path, url).unwrap();
+        }
+        assert_eq!(
+            take_invite(&path).unwrap().as_deref(),
+            Some(crate::invite::COOP)
+        );
+        assert_eq!(
+            take_invite(&path).unwrap().as_deref(),
+            Some(crate::invite::ARENA)
+        );
+        assert!(take_invite(&path).unwrap().is_none());
+    }
 
     #[test]
     fn language_survives_reopen_and_unknown_choices_preserve_the_profile() {

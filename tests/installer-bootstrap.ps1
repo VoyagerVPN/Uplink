@@ -21,7 +21,8 @@ function Invoke-RestMethod {
     @{planet=$testPlanet}
 }
 function Invoke-WebRequest {
-    param($Uri,$OutFile)
+    param($Uri,$OutFile,[switch]$UseBasicParsing)
+    Assert $UseBasicParsing "The unattended MSI download must use basic parsing"
     [IO.File]::WriteAllText($OutFile,'MSI fixture')
 }
 function Get-AuthenticodeSignature {
@@ -72,7 +73,12 @@ function Run-Installer {
     } finally { [Console]::SetIn($before) }
 }
 function Expect-Error([scriptblock]$action,[string]$pattern) {
-    try { & $action } catch { if ($_.Exception.Message -notmatch $pattern) { throw }; return }
+    try { & $action } catch {
+        if ($_.Exception.Message -notmatch $pattern) { throw }
+        if ($pattern -eq '1603') { Assert ($_.Exception.Data['UplinkSetupCode'] -eq 34) 'Missing MSI failure code' }
+        if ($pattern -eq 'Proof setup interrupted') { Assert ($_.Exception.Data['UplinkSetupCode'] -eq 36) 'Missing device proof failure code' }
+        return
+    }
     throw "Expected error matching $pattern"
 }
 try {

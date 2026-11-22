@@ -25,8 +25,7 @@ pub(super) fn configure_tls(client: &mut curl::easy::Easy) -> Result<(), curl::E
     })
 }
 
-#[test]
-fn https_sync_reuses_connection_and_recovers_after_server_close() {
+fn test_tls() -> (Arc<ServerConfig>, tempfile::TempDir) {
     let ca_key = KeyPair::generate().unwrap();
     let mut params = CertificateParams::default();
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -53,6 +52,12 @@ fn https_sync_reuses_connection_and_recovers_after_server_close() {
     let root = dir.path().join("root.pem");
     fs::write(&root, ca.pem()).unwrap();
     TEST_CA.set(Some(root));
+    (tls, dir)
+}
+
+#[test]
+fn https_sync_reuses_connection_and_recovers_after_server_close() {
+    let (tls, _directory) = test_tls();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let host = listener.local_addr().unwrap().to_string();
     let server = thread::spawn(move || {
@@ -120,4 +125,67 @@ fn https_sync_reuses_connection_and_recovers_after_server_close() {
     }
     TEST_CA.set(None);
     assert_eq!(server.join().unwrap(), 2);
+}
+
+#[test]
+fn a_rejected_password_change_preserves_the_last_accepted_secret() {
+    use crate::settings::{network_action, network_password};
+    let (tls, dir) = test_tls();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let host = listener.local_addr().unwrap().to_string();
+    let service = thread::spawn(move || {
+        for (status, payload) in [
+            (200, r#"{"password_revision":"v1"}"#),
+            (403, "{}"),
+            (200, "{}"),
+        ] {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut stream = BufReader::new(StreamOwned::new(
+                ServerConnection::new(tls.clone()).unwrap(),
+                socket,
+            ));
+            let mut lines = (&mut stream).lines();
+            assert!(
+                lines
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .starts_with("POST /v1/manage ")
+            );
+            let size = lines
+                .map(Result::unwrap)
+                .take_while(|l| !l.is_empty())
+                .filter_map(|line| {
+                    line.to_lowercase()
+                        .strip_prefix("content-length: ")
+                        .and_then(|v| v.parse::<usize>().ok())
+                })
+                .last()
+                .unwrap();
+            stream.read_exact(&mut vec![0; size]).unwrap();
+            write!(stream.get_mut(),"HTTP/1.1 {status} Result\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",payload.len()).unwrap();
+            stream.get_mut().flush().unwrap();
+        }
+    });
+    let path = dir.path().join("prefs.json");
+    let url = format!("uplink://{host}/networks/abcd");
+    let live = json!({"id":"abcd","transport":"local-fixture","host":host,"name":"Lab","node":"owner","session":"fixture",
+        "rows":[{"node":"owner","nick":"Owner","role":"owner","present":true,"ip":"10.0.0.1"}],
+        "methods":{"link":true,"qr":false,"password":false}});
+    fs::write(
+        &path,
+        json!({"power":false,"rooms":[&url],"live":{&url:live}}).to_string(),
+    )
+    .unwrap();
+    network_action(&path, &url, "password", "first fixture").unwrap();
+    assert_eq!(network_password(&path, &url).unwrap(), "first fixture");
+    assert!(network_action(&path, &url, "password", "rejected fixture").is_err());
+    assert_eq!(network_password(&path, &url).unwrap(), "first fixture");
+    network_action(&path, &url, "password-mode", "").unwrap();
+    assert!(network_password(&path, &url).unwrap().is_empty());
+    TEST_CA.set(None);
+    service.join().unwrap();
 }

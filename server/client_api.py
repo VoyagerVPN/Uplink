@@ -1,5 +1,7 @@
 """API клиентов. TLS завершается на обратном прокси инстанса."""
 import base64
+import hashlib
+import re
 import os
 import time
 import threading
@@ -93,7 +95,47 @@ def route(method, path, data):
     raise ApiError(403, "Client access only")
 
 
+# Из журнала нельзя восстановить билет. Метка действует до перезапуска процесса.
+_LOG_KEY = os.urandom(32)
+_STAGES = {"/v1/" + s: s for s in (
+    "login", "bootstrap", "redeem", "attest", "sync", "share", "avatar", "manage", "ping", "leave"
+)}
+_REASONS = {msg: msg.lower().replace(" ", "_") for msg in (
+    "Invalid network credentials", "Invalid credential", "Invalid or expired invitation",
+    "Invitation already used", "Invitations are disabled", "Waiting for network join",
+    "Device identity changed", "Membership revoked", "Session was retired",
+    "Node already enrolled", "Existing device session required", "Node or session already enrolled",
+    "Invalid session", "Invalid membership", "Device proof required", "Invalid device proof",
+    "Device verification unavailable", "Too many login attempts", "Invalid nickname", "Invalid node",
+    "Invalid request", "Invalid body size", "Expected a JSON object", "Local service unavailable",
+    "Client access only", "Update Uplink to join a logical network", "Unknown private network",
+    "Network management permission required", "Owner permission required",
+)}
+
+
 class ClientRequest(OwnerRequest):
+    def address_string(self):
+        return "uplink-client"
+
+    def response_context(self, data, status, result):
+        error = result.get("error") if isinstance(result, dict) else None
+        self.reason = "ok" if status < 400 else _REASONS.get(error, "request_failed")
+        source = result if self.path in ("/v1/login", "/v1/share") else data
+        token = source.get("token") if isinstance(source, dict) else None
+        self.ticket_tag = "-"
+        if self.path in ("/v1/login", "/v1/share", "/v1/bootstrap", "/v1/redeem") and isinstance(token, str) and re.fullmatch(r"[a-f0-9]{64}", token):
+            self.ticket_tag = hashlib.blake2s(token.encode(), key=_LOG_KEY, digest_size=8).hexdigest()
+
+    def log_error(self, fmt, *args):
+        # BaseHTTPRequestHandler включает непроверенные метод и строку запроса.
+        # send_error также вызывает log_request с безопасным числовым статусом.
+        pass
+
+    def handle_one_request(self):
+        self.reason = "http_error"
+        self.ticket_tag = "-"
+        super().handle_one_request()
+
     route = staticmethod(route)
 
     def request_limit(self):
@@ -101,7 +143,8 @@ class ClientRequest(OwnerRequest):
 
     def log_request(self, code="-", size="-"):
         # При ошибке клиент может прислать секрет в пути.
-        self.log_message("request status %s", code)
+        stage = _STAGES.get(getattr(self, "path", ""), "unknown")
+        self.log_message("stage=%s status=%s reason=%s ticket=%s", stage, code, self.reason, self.ticket_tag)
 
 
 if __name__ == "__main__":

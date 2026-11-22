@@ -156,7 +156,11 @@ class OwnerRequest(BaseHTTPRequestHandler):
     def request_limit(self):
         return 4096
 
+    def response_context(self, data, status, result):
+        pass
+
     def handle_request(self):
+        data = {}
         try:
             size = int(self.headers.get("Content-Length", "0"))
             if not 0 <= size <= self.request_limit():
@@ -172,6 +176,7 @@ class OwnerRequest(BaseHTTPRequestHandler):
         except (OSError, sqlite3.OperationalError):
             status, result = 503, {"error": "Local service unavailable"}
         body = json.dumps(result).encode()
+        self.response_context(data, status, result)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

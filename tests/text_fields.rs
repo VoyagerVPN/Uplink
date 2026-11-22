@@ -99,6 +99,17 @@ fn saved_networks_can_be_switched_from_the_main_screen() {
     ui.on_join_room(move |url| *result.borrow_mut() = url.to_string());
     click(&ui, 37., 214.);
     assert!(ui.get_adding_network());
+    click(&ui, 37., 174.);
+    assert!(
+        !ui.get_adding_network(),
+        "Clicking the backdrop dismisses the join form"
+    );
+    assert_eq!(
+        selections.borrow().len(),
+        1,
+        "The backdrop covers the network rail"
+    );
+    click(&ui, 37., 214.);
     key(&ui, "uplink://coop.example/rooms/coop");
     key(&ui, Key::Return);
     assert_eq!(
@@ -139,7 +150,8 @@ fn russian_paste_in_invitation_input() {
     let submitted = Rc::new(RefCell::new(String::new()));
     let result = submitted.clone();
     ui.on_join_room(move |url| *result.borrow_mut() = url.to_string());
-    click(&ui, 56., 211.);
+    click(&ui, 68., 174.);
+    assert!(ui.get_adding_network());
     ui.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Control.into(),
     });
@@ -238,18 +250,23 @@ fn clicking_outside_commits_once_and_preserves_the_clicked_control() {
 
     click(&ui, 108., 77.);
     key(&ui, "2");
-    click(&ui, 56., 211.);
+    click(&ui, 68., 174.);
     assert!(!ui.get_editing());
+    assert!(ui.get_adding_network());
     key(&ui, "abc");
     key(&ui, Key::Return);
     assert_eq!(*joined.borrow(), ["abc"]);
+    key(&ui, Key::Escape);
 
     click(&ui, 115., 77.);
     key(&ui, "3");
-    click(&ui, 352., 211.);
+    click(&ui, 68., 174.);
+    assert!(ui.get_adding_network());
+    key(&ui, "second");
+    click(&ui, 335., 311.);
     assert!(!ui.get_editing());
     assert_eq!(*saved.borrow(), ["Ranazy1", "Ranazy12", "Ranazy123"]);
-    assert_eq!(*joined.borrow(), ["abc", "abc"]);
+    assert_eq!(*joined.borrow(), ["abc", "second"]);
 }
 
 #[test]
@@ -355,16 +372,76 @@ fn transferring_from_more_requires_confirmation_and_targets_the_selected_member(
 }
 
 #[test]
+fn saved_network_password_can_be_revealed_again_without_resubmitting_it() {
+    let (ui, surface) = open();
+    slint::select_bundled_translation("ru").unwrap();
+    let net = ui.global::<NetworkUi>();
+    net.set_live(true);
+    net.set_manages(true);
+    net.set_password_on(true);
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let saved = changes.clone();
+    let weak = ui.as_weak();
+    net.on_action(move |action, value| {
+        assert_eq!(action, "password");
+        saved.borrow_mut().push(value.to_string());
+        let ui = weak.unwrap();
+        let net = ui.global::<NetworkUi>();
+        net.set_password(value);
+        net.set_password_revision(net.get_password_revision() + 1);
+    });
+    let saved = changes.clone();
+    let weak = ui.as_weak();
+    net.on_load_password(move || {
+        weak.unwrap()
+            .global::<NetworkUi>()
+            .set_password(saved.borrow().last().cloned().unwrap_or_default().into());
+    });
+    net.set_panel("methods".into());
+    click(&ui, 110., 309.);
+    key(&ui, "new-password");
+    key(&ui, Key::Return);
+    assert_eq!(changes.borrow().as_slice(), ["new-password"]);
+    key(&ui, Key::Return);
+    assert_eq!(changes.borrow().len(), 1);
+    let text_pixels = || {
+        let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|r| {
+            r.render(&mut pixels, 388);
+        });
+        (297..319)
+            .flat_map(|y| pixels[y * 388 + 51..y * 388 + 123].iter().copied())
+            .collect::<Vec<_>>()
+    };
+    let masked = text_pixels();
+    click(&ui, 248., 308.);
+    let revealed = text_pixels();
+    assert!(masked != revealed, "The eye should show the saved text");
+    click(&ui, 81., 127.);
+    click(&ui, 188., 127.);
+    assert_eq!(net.get_panel(), "methods");
+    assert!(text_pixels() == masked, "Reopened field should be masked");
+    click(&ui, 248., 308.);
+    assert!(
+        text_pixels() == revealed,
+        "Reopened field should reveal the saved value"
+    );
+}
+
+#[test]
 fn credentials_submit_server_name_and_secret_from_the_native_form() {
     let (ui, _) = open();
     let net = ui.global::<NetworkUi>();
-    net.set_credentials(true);
+    click(&ui, 68., 174.);
+    assert!(ui.get_adding_network());
+    click(&ui, 274., 273.);
     let args = Rc::new(RefCell::new(Vec::new()));
     let sent = args.clone();
     net.on_login(move |server, name, password| {
         *sent.borrow_mut() = vec![server.to_string(), name.to_string(), password.to_string()];
     });
-    click(&ui, 100., 213.);
+    assert!(net.get_credentials());
     key(&ui, "after-hours.example");
     key(&ui, Key::Return);
     key(&ui, "После работы");
@@ -375,6 +452,18 @@ fn credentials_submit_server_name_and_secret_from_the_native_form() {
         args.borrow().as_slice(),
         ["after-hours.example", "После работы", "ui-fixture"]
     );
+    net.set_joining(true);
+    platform::update_timers_and_animations();
+    click(&ui, 5., 5.);
+    assert!(ui.get_adding_network());
+    net.set_joining(false);
+    ui.set_error("Connection failed".into());
+    platform::update_timers_and_animations();
+    args.borrow_mut().clear();
+    key(&ui, Key::Return);
+    key(&ui, Key::Return);
+    key(&ui, Key::Return);
+    assert_eq!(args.borrow().as_slice(), ["after-hours.example", "После работы", "ui-fixture"]);
 }
 
 #[test]

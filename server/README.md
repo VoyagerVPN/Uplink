@@ -83,3 +83,9 @@ Enter the server's HTTPS host, network name and password. On the same instance, 
 An owner or admin sets the password in invitation settings. The client sends the name and password in the HTTPS body of `POST /v1/login`. The server checks a separately salted scrypt verifier and issues a single-use ticket valid for an hour. Changing or disabling the password revokes pending sign-ins made with the old password. Existing memberships remain active. Each instance allows up to 12 login attempts per minute and two concurrent password checks. Exceeding either limit returns 429. The QR code and invitation field contain the same ticket.
 
 On first join, the client must sign the ticket and session with a device-specific key. The server obtains the trusted identity from its own controller. When upgrading a Windows installation, rerun `install-transport.ps1` once for the current user with an invitation for this instance. The script uses the adjacent `transport/windows/Provision-DeviceProof.ps1`. The node key stays with the service. The client uses a separate key with restricted access. Existing memberships use `POST /v1/attest` for verification. Until verified, the server hides the member list and blocks management actions.
+
+## Troubleshooting a join
+
+On the VPS, run `journalctl -u uplink-client-api.service --since "10 minutes ago" -o cat`. A password join starts with `login`. Both join methods then use `bootstrap` and `redeem`. A successful `bootstrap` followed by silence can indicate a local setup failure. Check the Windows client's `%APPDATA%\Uplink\last-join.log` for the last attempted stage.
+
+The server records the operation, HTTP status and a bounded reason code. A short keyed ticket tag links requests for the same invitation until the API restarts. Devices opening the same invitation share that tag. Requests without an invitation use `ticket=-`. The Windows log records the latest GUI join attempt and its outcome.

@@ -40,9 +40,16 @@ export global NetworkUi {
     in-out property <bool> live;
     in-out property <bool> saving;
     in-out property <bool> joining;
+    in-out property <int> join-step;
     in-out property <int> password-revision;
     in-out property <bool> setting-password;
-    changed panel => { if self.panel!="methods" {self.setting-password=false;} }
+    callback load-password();
+    changed panel => {
+        if self.panel != "methods" { self.setting-password = false; }
+        if self.live {
+            if self.panel == "methods" { self.load-password(); } else { self.password = ""; }
+        }
+    }
     callback login(string,string,string);
     public function open-invite() {
         self.error="";
@@ -166,11 +173,13 @@ export component NetworkPage inherits VerticalLayout {
                     Rectangle{horizontal-stretch:1;
                         property <bool> revealed;
                         property <int> revision:NetworkUi.password-revision;
-                        changed revision => {pass.text="";self.revealed=false;}
-                        pass:=TextField{text:NetworkUi.password;secret:!parent.revealed;trailing:26px;field-name:@tr("Network password");submit(s)=>{NetworkUi.action("password",s);}}
+                        property <string> saved: NetworkUi.password;
+                        changed revision => { pass.text = self.saved; self.revealed = false; }
+                        changed saved => { pass.text = self.saved; self.revealed = false; }
+                        pass:=TextField{text:NetworkUi.password;secret:!parent.revealed;trailing:26px;field-name:@tr("Network password");submit(s)=>{if save-password.available { save-password.invoked(); }}}
                         Action{x:parent.width - 30px;width:28px;height:28px;glyph:parent.revealed?@image-url("../assets/icon/eye-off.svg"):@image-url("../assets/icon/eye.svg");icon-only:true;borderless-focus:true;caption:parent.revealed?@tr("Hide password"):@tr("Show password");invoked=>{parent.revealed=!parent.revealed;}}
                     }
-                    Action{caption:@tr("Save");available:!NetworkUi.saving && pass.text!="" && pass.text!=NetworkUi.password;filled:true;invoked=>{NetworkUi.action("password",pass.text);}}
+                    save-password:=Action{caption:@tr("Save");available:!NetworkUi.saving && pass.text!="" && pass.text!=NetworkUi.password;filled:true;invoked=>{NetworkUi.action("password",pass.text);}}
                 }
             }
         }
@@ -181,21 +190,4 @@ export component NetworkPage inherits VerticalLayout {
     }
     if NetworkUi.error!="":Label{text:NetworkUi.error;color:#e99087;height:28px;font-size:12px;}
     Rectangle{}
-}
-
-export component JoinMode inherits HorizontalLayout {
-    height:30px;spacing:3px;alignment:start;
-    Tab{width:65px;title:@tr("Link");selected:!NetworkUi.credentials;choose=>{NetworkUi.credentials=false;}}
-    Tab{width:140px;title:@tr("Name and password");selected:NetworkUi.credentials;choose=>{NetworkUi.credentials=true;}}
-}
-export component Credentials inherits VerticalLayout {
-    height:216px;spacing:4px;
-    Label{text:@tr("Server");height:16px;color:#a7abb2;font-size:12px;}
-    host:=TextField{text:NetworkUi.server;field-name:@tr("Server");submit(s)=>{login.focus();}}
-    Label{text:@tr("Network name");height:16px;color:#a7abb2;font-size:12px;}
-    login:=TextField{field-name:@tr("Network name");submit(s)=>{pass.focus();}}
-    Rectangle{height:2px;}
-    Label{text:@tr("Password");height:16px;color:#a7abb2;font-size:12px;}
-    pass:=TextField{field-name:@tr("Password");secret:true;submit(s)=>{NetworkUi.login(host.text,login.text,s);}}
-    HorizontalLayout{height:32px;alignment:start;Action{caption:@tr("Join");available:!NetworkUi.joining && host.text!="" && login.text!="" && pass.text!="";filled:true;invoked=>{NetworkUi.login(host.text,login.text,pass.text);}}}
 }

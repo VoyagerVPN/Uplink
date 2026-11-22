@@ -188,8 +188,20 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [ ] If final controller writes are slow in practice, coordinate authorization with revocation and shared transport tag updates before moving those writes outside the SQLite transaction.
 - [ ] Verify an uninterrupted first-time MSI installation and device proof provisioning on another clean Windows system.
 
+## Joining a network
+
+- [x] Open a centered join dialog from the network rail or the empty network list. Keep both sign-in methods and connection progress inside the dialog. Restore the entered values on failure.
+- [x] Show a copy icon to the right of the selected network's server address on hover. Keep the check visible for two seconds after copying, including when the pointer leaves.
+- [x] Network managers can reveal a password they saved on this Windows profile after reopening settings. Protect the local copy with per-user DPAPI and check the server's password revision when available.
+- [x] Show progress for an invitation or password join, including links opened from another application. Clear the previous error when retrying and keep the form available after failure.
+- [x] Confirm invitation copying with the same two-second check as IP copying. Let users copy the server address from the network and both the address and network name from password invitations.
+- [x] Identify API stages and rejection reasons in the server journal. Correlate ticket issuance and enrollment without exposing the ticket, password, session or device proof.
+- [x] Join by invitation and password on an isolated controller with two ZeroTier peers and verify that both receive different virtual IPs.
+- [ ] Confirm the reported first join on the affected Windows PC. The server journal from before the logging change did not record the failed operation.
 
 ## Windows installer
+
+- [x] Center the client and setup window in the active monitor's work area on first display. Both were measured on an isolated Windows desktop.
 
 - [x] The installer compares the client file version with the package version. First install, upgrade from 0.0.9 to 0.1.0 and reinstall of 0.1.0 were checked in the GUI.
 - [x] The NSIS package Uplink-Setup.exe uses a Slint window with the app's icon, font and buttons. The version appears below the title.

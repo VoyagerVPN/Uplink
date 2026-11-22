@@ -91,8 +91,11 @@ class Invitations:
 
     def methods(self, db, network):
         row = db.execute("SELECT link,qr FROM join_methods WHERE network=?", (network,)).fetchone()
-        return {"link":bool(row["link"]) if row else True,"qr":bool(row and row["qr"]),
-                "password":bool(db.execute("SELECT 1 FROM network_passwords WHERE network=?",(network,)).fetchone())}
+        password = db.execute("SELECT salt FROM network_passwords WHERE network=?", (network,)).fetchone()
+        methods = {"link": bool(row["link"]) if row else True, "qr": bool(row and row["qr"]), "password": bool(password)}
+        if password:
+            methods["password_revision"] = hashlib.sha256(password["salt"]).hexdigest()
+        return methods
 
     def login(self, name, password):
         if not isinstance(name,str) or not 1 <= len(name.strip()) <= 64:
@@ -260,6 +263,8 @@ class Invitations:
                 else:
                     db.execute("DELETE FROM network_passwords WHERE network=?",(network,))
                 self.revoke_pending(db, network, "password")
+                if action == "password":
+                    return {"id": network, "password_revision": self.methods(db, network)["password_revision"]}
             elif action in ("link","qr"):
                 if value not in ("on","off"):
                     raise ApiError(400,"Invalid invitation setting")

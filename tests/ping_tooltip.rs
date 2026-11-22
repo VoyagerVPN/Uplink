@@ -89,7 +89,69 @@ fn hovering_server_signal_displays_and_dismisses_custom_tooltip() {
 }
 
 #[test]
+fn invitation_copy_shows_a_check_for_two_seconds() {
+    use slint::platform::PointerEventButton;
+    let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    let clock = Rc::new(Cell::new(10));
+    platform::set_platform(Box::new(TestDesktop {
+        surface: surface.clone(),
+        time_ms: clock.clone(),
+    }))
+    .unwrap();
+    let ui = RoomWindow::new().unwrap();
+    let net = ui.global::<NetworkUi>();
+    net.set_modal("invite".into());
+    net.set_method("link".into());
+    net.set_link_on(true);
+    net.set_link("uplink://join/after-hours".into());
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    net.on_clipboard(move |text| {
+        assert_eq!(text, "uplink://join/after-hours");
+        count.set(count.get() + 1);
+        true
+    });
+    ui.show().unwrap();
+    surface.set_size(PhysicalSize::new(388, 540));
+    let check_visible = || {
+        let mut pixels = vec![Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|r| {
+            r.render(&mut pixels, 388);
+        });
+        (290..326).any(|y| {
+            (318..350).any(|x| {
+                let p = pixels[y * 388 + x];
+                p.g > 140 && p.g > p.b.saturating_add(45)
+            })
+        })
+    };
+    let position = LogicalPosition::new(334., 308.);
+    let button = PointerEventButton::Left;
+    assert!(!check_visible());
+    ui.window()
+        .dispatch_event(WindowEvent::PointerPressed { position, button });
+    ui.window()
+        .dispatch_event(WindowEvent::PointerReleased { position, button });
+    platform::update_timers_and_animations();
+    assert_eq!(calls.get(), 1);
+    assert!(check_visible());
+    clock.set(2011);
+    platform::update_timers_and_animations();
+    assert!(!check_visible());
+}
+
+#[test]
 fn address_shows_copy_on_hover_then_acknowledges_each_click_for_two_seconds() {
+    verify_address_copy(false);
+}
+
+#[test]
+fn server_address_shows_its_copy_icon_on_hover_and_retains_the_check_after_leaving() {
+    verify_address_copy(true);
+}
+
+fn verify_address_copy(server: bool) {
     use slint::platform::PointerEventButton;
     let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     let time = Rc::new(Cell::new(10));
@@ -105,7 +167,8 @@ fn address_shows_copy_on_hover_then_acknowledges_each_click_for_two_seconds() {
         ip: "192.0.2.11".into(),
         ..Default::default()
     }])));
-    ui.on_copy(|address| address == "192.0.2.11");
+    ui.set_room_server("lan".into());
+    ui.on_copy(move |address| address == if server { "lan" } else { "192.0.2.11" });
     ui.show().unwrap();
     surface.set_size(PhysicalSize::new(388, 540));
     let render = || {
@@ -116,7 +179,7 @@ fn address_shows_copy_on_hover_then_acknowledges_each_click_for_two_seconds() {
         });
         pixels
     };
-    let at = LogicalPosition::new(278., 225.);
+    let at = if server { LogicalPosition::new(83., 159.) } else { LogicalPosition::new(278., 225.) };
     let hover = |pos| {
         ui.window()
             .dispatch_event(WindowEvent::PointerMoved { position: pos })
@@ -138,8 +201,8 @@ fn address_shows_copy_on_hover_then_acknowledges_each_click_for_two_seconds() {
         platform::update_timers_and_animations();
     };
     let icon_pixels = |pixels: &[Rgb8Pixel], green| {
-        (216..236)
-            .flat_map(|y| (319..338).map(move |x| y * 388 + x))
+        let (xs, ys) = if server { (98..119, 149..171) } else { (319..338, 216..236) };
+        ys.flat_map(|y| xs.clone().map(move |x| y * 388 + x))
             .filter(|&i| {
                 let p = pixels[i];
                 if green {

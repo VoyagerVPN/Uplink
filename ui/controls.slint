@@ -139,3 +139,40 @@ export component EditableTitle inherits Rectangle {
     }
 }
 
+
+export component DialogFrame inherits FocusScope {
+    in property <length> card-width: 348px;
+    callback dismiss();
+    key-pressed(e) => {
+        if e.text == Key.Escape { root.dismiss(); return accept; }
+        return reject;
+    }
+    Rectangle { background: #080a0bbd; TouchArea { clicked => { root.dismiss(); } } }
+    Rectangle {
+        width: root.card-width; height: content.preferred-height;
+        background: #202225; border-radius: 9px; border-color: #393c41; border-width: 1px;
+        TouchArea {}
+        content := VerticalLayout { padding: 17px; spacing: 12px; @children }
+    }
+}
+
+export component CopyFeedback inherits Rectangle {
+    width: 0px; height: 0px;
+    out property <bool> active: expiry.running;
+    out property <bool> success;
+    property <duration> until;
+    public function clear() { expiry.stop(); }
+    public function show(ok: bool) {
+        success = ok;
+        until = animation-tick() + 2s;
+        expiry.interval = 2s;
+        expiry.start();
+    }
+    expiry := Timer {
+        running: false; interval: 2s;
+        triggered => {
+            if root.until > animation-tick() { self.interval = root.until - animation-tick(); }
+            else { self.stop(); }
+        }
+    }
+}

@@ -150,11 +150,14 @@ class GroupTrafficTest(unittest.TestCase):
             self.members[who]={"authorized":False,"tags":[],"ipAssignments":[]}
         self.api.redeem(self.api.issue(self.a),node,"1"*64,"Owner")
         self.api.assign_owner(self.a,node)
-        self.api.manage("1"*64,"password","secret one")
+        first = self.api.manage("1"*64,"password","secret one")["password_revision"]
+        self.assertEqual(self.api.sync("1"*64,"Owner")["methods"]["password_revision"], first)
         token=self.api.login(" a ","secret one")
         self.assertEqual(self.api.lookup(token)["id"],self.a)
         with self.assertRaises(ApiError): self.api.login("B","secret one")
-        self.api.manage("1"*64,"password","secret two")
+        second = self.api.manage("1"*64,"password","secret two")["password_revision"]
+        self.assertNotEqual(first, second)
+        self.assertEqual(self.api.sync("1"*64,"Owner")["methods"]["password_revision"], second)
         with self.assertRaises(ApiError): self.api.lookup(token)
         with self.assertRaises(ApiError): self.api.login("A","secret one")
         self.api.manage("1"*64,"name","Друзья")
@@ -162,6 +165,7 @@ class GroupTrafficTest(unittest.TestCase):
         self.api.redeem(self.api.login("друзья","secret two"),friend,"2"*64,"Friend")
         with self.assertRaises(ApiError): self.api.manage("2"*64,"password","x")
         self.api.manage("1"*64,"password-mode","off")
+        self.assertNotIn("password_revision", self.api.sync("1"*64,"Owner")["methods"])
         with self.assertRaises(ApiError): self.api.login("Друзья","secret two")
         self.assertEqual(len(self.api.sync("2"*64,"Friend")["members"]),2)
 

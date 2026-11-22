@@ -1,6 +1,49 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+#[test]
+fn saved_password_reopens_only_for_the_current_network_revision_and_manager() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = dir.path().join("prefs.json");
+    let url = "uplink://sample.example/networks/1234";
+    let secret = "тестовый пароль";
+    let live = serde_json::json!({
+        "host":"sample.example", "id":"1234", "node":"alice", "name":"Example", "session":"fixture",
+        "rows":[{"node":"alice","nick":"Alice","ip":"10.0.0.2","present":true,"role":"owner"}],
+        "methods":{"link":true,"qr":false,"password":true,"password_revision":"first"}
+    });
+    update(&profile, |prefs| {
+        prefs["rooms"] = serde_json::json!([url]);
+        prefs["live"][url] = live;
+        Ok(())
+    })
+    .unwrap();
+    let sealed = super::password::seal(url, secret).unwrap();
+    store_network_password(&profile, url, Some(sealed), Some("first")).unwrap();
+    assert!(!fs::read_to_string(&profile).unwrap().contains(secret));
+    assert_eq!(network_password(&profile, url).unwrap(), secret);
+    update(&profile, |prefs| {
+        prefs["live"][url]["methods"]["password_revision"] = "second".into();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(network_password(&profile, url).unwrap(), "");
+    update(&profile, |prefs| {
+        prefs["live"][url]["methods"]["password_revision"] = "first".into();
+        prefs["live"][url]["rows"][0]["role"] = "member".into();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(network_password(&profile, url).unwrap(), "");
+    store_network_password(&profile, url, None, None).unwrap();
+    assert!(
+        read(&profile).unwrap()["saved_passwords"]
+            .get(url)
+            .is_none()
+    );
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Policy {
@@ -90,7 +133,57 @@ fn modify(
     })
 }
 
+pub fn network_password(path: &Path, url: &str) -> io::Result<String> {
+    let prefs = read(path)?;
+    let entry = &prefs["saved_passwords"][url];
+    let Some(sealed) = entry["sealed"].as_str() else {
+        return Ok(String::new());
+    };
+    if !saved_urls(&prefs)?.contains(&url) {
+        return Ok(String::new());
+    }
+    let room = room_info(&prefs, url);
+    if !room.manages() {
+        return Ok(String::new());
+    }
+    let Some(methods) = room.live.and_then(|live| live.methods) else {
+        return Ok(String::new());
+    };
+    if !methods.password || methods.password_revision.as_deref() != entry["revision"].as_str() {
+        return Ok(String::new());
+    }
+    super::password::open(url, sealed)
+}
+
+fn store_network_password(
+    path: &Path,
+    url: &str,
+    sealed: Option<String>,
+    revision: Option<&str>,
+) -> io::Result<()> {
+    update(path, |prefs| {
+        let enabled = sealed.is_some();
+        if let Some(sealed) = sealed {
+            prefs["saved_passwords"][url] =
+                serde_json::json!({"sealed":sealed,"revision":revision});
+        } else if let Some(entries) = prefs["saved_passwords"].as_object_mut() {
+            entries.remove(url);
+        }
+        if let Some(methods) = prefs["live"][url]["methods"].as_object_mut() {
+            methods.insert("password".into(), enabled.into());
+            methods.insert("password_revision".into(), serde_json::json!(revision));
+        }
+        Ok(())
+    })
+}
+
 pub fn network_action(path: &Path, url: &str, action: &str, value: &str) -> io::Result<()> {
+    let password_change = matches!(action, "password" | "password-mode");
+    let guard = if password_change {
+        Some(transport_lock(path)?)
+    } else {
+        None
+    };
     if let Some(room) = rooms(path)?
         .into_iter()
         .find(|r| r.url == url && r.live.is_some())
@@ -127,7 +220,16 @@ pub fn network_action(path: &Path, url: &str, action: &str, value: &str) -> io::
                 ));
             }
         };
-        live.manage(action, value)?;
+        let sealed = if action == "password" {
+            Some(super::password::seal(url, value)?)
+        } else {
+            None
+        };
+        let reply = live.manage(action, value)?;
+        if password_change {
+            store_network_password(path, url, sealed, reply["password_revision"].as_str())?;
+        }
+        drop(guard);
         refresh_transport(path)?;
         return Ok(());
     }
@@ -196,6 +298,17 @@ pub fn join_credentials(path: &Path, login: &str, password: &str) -> io::Result<
 }
 
 pub fn join_on_server(path: &Path, server: &str, name: &str, password: &str) -> io::Result<()> {
+    join_on_server_with_progress(path, server, name, password, &|_| {})
+}
+
+pub fn join_on_server_with_progress(
+    path: &Path,
+    server: &str,
+    name: &str,
+    password: &str,
+    progress: &dyn Fn(super::JoinStage),
+) -> io::Result<()> {
+    progress(super::JoinStage::Access);
     if !options(path)?.enabled {
         return Err(io::Error::other("Uplink is disabled"));
     }
@@ -211,5 +324,5 @@ pub fn join_on_server(path: &Path, server: &str, name: &str, password: &str) -> 
         }
     }
     let link = crate::transport::password_invite(&host, name.trim(), password)?;
-    join(path, &link)
+    super::join_with_progress(path, &link, true, progress)
 }

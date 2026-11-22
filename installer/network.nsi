@@ -26,6 +26,13 @@ Section
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$2\network-action.ps1"'
     Pop $0
     Pop $1
+    IntCmp $0 31 setupCode oldCode setupRange
+setupRange:
+    IntCmp $0 37 setupCode setupCode oldCode
+setupCode:
+    StrCpy $3 $0
+    Goto finish
+oldCode:
     StrCmp $0 "29" 0 +2
     StrCpy $3 29
     StrCmp $0 "0" 0 finish

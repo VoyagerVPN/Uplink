@@ -7,6 +7,11 @@ param(
 )
 if ($ReadInvitation) { $Invitation = [Console]::In.ReadLine() }
 $ErrorActionPreference = 'Stop'
+$failureCode = 31
+trap {
+    $_.Exception.Data['UplinkSetupCode'] = $failureCode
+    break
+}
 
 if ($Invitation -cnotmatch '^uplink://(?<server>[a-zA-Z0-9.-]+)/invite/(?<token>[a-f0-9]{64})$') {
     throw 'Ожидается ссылка-приглашение Uplink.'
@@ -76,6 +81,7 @@ function Set-SecretAccess([string]$path, [bool]$clientAccess) {
     Set-Acl -LiteralPath $path -AclObject $rules
 }
 
+$failureCode = 32
 if (Test-Path -LiteralPath $base) { Assert-PrivateDirectory $base }
 $service = Get-Service ZeroTierOneService -ErrorAction SilentlyContinue
 $needsMsi = !$service
@@ -93,12 +99,14 @@ if ($exists) {
 } elseif ($service) { throw $foreign }
 
 if ($needsMsi) {
+    $failureCode = 33
     $cache = Join-Path $PSScriptRoot '.cache/zerotier-129'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $msi = Join-Path $cache 'ZeroTierOne.msi'
     if (!(Test-Path -LiteralPath $msi)) {
-        Invoke-WebRequest -Uri 'https://download.zerotier.com/RELEASES/1.16.2/dist/ZeroTierOne.msi' -OutFile $msi
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://download.zerotier.com/RELEASES/1.16.2/dist/ZeroTierOne.msi' -OutFile $msi
     }
+    $failureCode = 34
     if (!(Test-Path -LiteralPath $base)) { Protect-NewDirectory $base }
     $packageDir = Join-Path $base ('uplink-msi-' + [guid]::NewGuid().ToString('N'))
     Protect-NewDirectory $packageDir
@@ -143,6 +151,7 @@ if ($needsMsi) {
         [IO.Directory]::Delete($packageDir)
     }
 }
+$failureCode = 35
 $service = Get-Service ZeroTierOneService -ErrorAction Stop
 if (!$service) { throw 'Служба ZeroTier не установлена.' }
 if ($service.Status -eq 'Stopped') { Start-Service ZeroTierOneService }
@@ -168,5 +177,6 @@ foreach ($file in 'identity.secret','metricstoken.secret','authtoken.secret') {
     if ($file -eq 'metricstoken.secret' -and !(Test-Path -LiteralPath $target -PathType Leaf)) { continue }
     Set-SecretAccess $target ($file -eq 'authtoken.secret')
 }
+$failureCode = 36
 & (Join-Path $PSScriptRoot 'transport/windows/Provision-DeviceProof.ps1') -ZeroTierHome $dir -UserSid $who
 Write-Output 'Транспорт готов. Откройте приглашение в Uplink.'

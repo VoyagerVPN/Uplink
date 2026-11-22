@@ -37,6 +37,19 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
     let draft: Editor = Default::default();
     let net = window.global::<NetworkUi>();
     let weak = window.as_weak();
+    let password_profile = prefs.clone();
+    net.on_load_password(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let net = ui.global::<NetworkUi>();
+        match settings::network_password(&password_profile, ui.get_invite_url().as_str()) {
+            Ok(password) => net.set_password(password.into()),
+            Err(error) => {
+                net.set_password("".into());
+                problem(&ui, error);
+            }
+        }
+    });
+    let weak = window.as_weak();
     let profile = prefs.clone();
     let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     net.on_request_link(move || {
@@ -48,6 +61,7 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
             return;
         };
         let net = ui.global::<NetworkUi>();
+        net.set_error("".into());
         net.set_link("".into());
         net.set_qr_image(Default::default());
         let generation = generation.clone();
@@ -85,6 +99,7 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
         if !net.get_manages() || net.get_saving() {
             return;
         }
+        net.set_error("".into());
         if action == "password-mode" && net.get_live() && !net.get_password_on() {
             net.set_setting_password(!net.get_setting_password());
             return;
@@ -175,16 +190,9 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
         {
             return;
         }
-        net.set_joining(true);
-        let weak = ui.as_weak();
-        let path = prefs.as_ref().clone();
         let (host, name, pass) = (host.to_string(), name.to_string(), pass.to_string());
-        std::thread::spawn(move || {
-            let result = settings::join_on_server(&path, &host, &name, &pass);
-            let _ = weak.upgrade_in_event_loop(move |ui| {
-                ui.global::<NetworkUi>().set_joining(false);
-                finish_room_change(&ui, &path, result)
-            });
+        start_join(&ui, &prefs, move |path, progress| {
+            settings::join_on_server_with_progress(path, &host, &name, &pass, progress)
         });
     });
     net.on_clipboard(|s| clipboard_win::set_clipboard_string(&s).is_ok());

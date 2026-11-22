@@ -4,6 +4,14 @@ msgstr ""
 "X-Display-Name: Русский\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 
+msgctxt "native"
+msgid "Could not save the password on this PC."
+msgstr "Не удалось сохранить пароль на этом компьютере."
+
+msgctxt "native"
+msgid "Could not read the password saved on this PC."
+msgstr "Не удалось прочитать пароль, сохранённый на этом компьютере."
+
 msgid "Undo"
 msgstr "Отменить"
 
@@ -796,3 +804,85 @@ msgstr "Не удалось открыть файл изображения."
 msgctxt "native"
 msgid "The server upload limit is too low for this avatar."
 msgstr "Аватар превышает лимит загрузки на сервере."
+
+msgid "Copy server address"
+msgstr "Скопировать адрес сервера"
+
+msgid "Joining network"
+msgstr "Подключение к сети"
+
+msgid "Check network access"
+msgstr "Проверка доступа к сети"
+
+msgid "Prepare ZeroTier on this PC"
+msgstr "Подготовка ZeroTier на компьютере"
+
+msgid "Confirm membership"
+msgstr "Подтверждение участия в сети"
+
+msgid "Get a virtual IP address"
+msgstr "Получение виртуального IP-адреса"
+
+msgctxt "native"
+msgid "Could not get the ZeroTier configuration from the server."
+msgstr "Не удалось получить конфигурацию ZeroTier с сервера."
+
+msgctxt "native"
+msgid "The existing ZeroTier installation could not be used safely."
+msgstr "Проверьте конфигурацию и права доступа уже установленного ZeroTier."
+
+msgctxt "native"
+msgid "Could not download the ZeroTier installer."
+msgstr "Не удалось скачать установщик ZeroTier. Проверьте подключение к интернету."
+
+msgctxt "native"
+msgid "Could not verify or install the ZeroTier package."
+msgstr "Не удалось проверить подпись или установить пакет ZeroTier."
+
+msgctxt "native"
+msgid "The local ZeroTier service could not be prepared."
+msgstr "Не удалось подготовить локальную службу ZeroTier."
+
+msgctxt "native"
+msgid "Could not prepare device verification for this Windows account."
+msgstr "Не удалось подготовить ключ устройства для этой учётной записи Windows."
+
+msgctxt "native"
+msgid "Network setup requires elevation with the same Windows account."
+msgstr "Для настройки нужны права администратора в текущей учётной записи Windows."
+
+msgctxt "native"
+msgid "Windows permission to prepare ZeroTier was cancelled."
+msgstr "Запрос прав для настройки ZeroTier отменён."
+
+msgctxt "native"
+msgid "Too many pending invitations"
+msgstr "Слишком много приглашений в очереди."
+
+msgctxt "native"
+msgid "Invalid or expired invitation"
+msgstr "Приглашение недействительно или истекло."
+
+msgctxt "native"
+msgid "Invitation already used"
+msgstr "Это приглашение уже использовано."
+
+msgctxt "native"
+msgid "Invalid device proof"
+msgstr "Сервер отклонил подтверждение устройства."
+
+msgctxt "native"
+msgid "Device proof required"
+msgstr "Серверу требуется подтверждение устройства."
+
+msgctxt "native"
+msgid "Membership revoked"
+msgstr "Доступ к сети отозван."
+
+msgctxt "native"
+msgid "Existing device session required"
+msgstr "Сервер ожидает прежний сеанс этого устройства."
+
+msgctxt "native"
+msgid "Node already enrolled"
+msgstr "Устройство уже зарегистрировано в этой сети."

@@ -65,7 +65,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         settings::start_session(&settings::path()?)?;
     }
     if join {
-        settings::join(&settings::path()?, &args[0])?;
+        settings::queue_invite(&settings::path()?, &args[0])?;
         changed::notify()?;
     }
     if existing {
