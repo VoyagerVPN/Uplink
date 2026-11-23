@@ -36,6 +36,13 @@ class GroupTrafficTest(unittest.TestCase):
         for group, name in ((self.a, "A"), (self.b, "B")):
             self.api.create_group(group, {"name": name, "transport": self.transport, "subnet": "10.188.37.0/24"})
 
+    def test_sync_distinguishes_a_missing_saved_group_from_a_denied_membership(self):
+        self.setup_groups()
+        for network, expected in [(self.a, 403), ("3" * 32, 410), ("f" * 16, 410), (self.transport, 403), ("bad", 403)]:
+            with self.subTest(network=network), self.assertRaises(ApiError) as denied:
+                self.api.sync("f" * 64, "Former member", network=network)
+            self.assertEqual(denied.exception.status, expected)
+
     def test_owner_can_create_networks_by_name_on_a_new_instance(self):
         self.networks[self.transport] = {
             "id": self.transport, "name": "Legacy", "routes": [{"target": "10.0.0.0/9"}]

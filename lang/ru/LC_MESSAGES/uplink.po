@@ -1030,3 +1030,15 @@ msgstr "Сервер загрузки отклонил запрос VPS на п�
 msgctxt "native"
 msgid "SSH file not found"
 msgstr "Файл SSH-ключа не найден."
+
+msgid "Network deleted"
+msgstr "Сеть удалена"
+
+msgid "Network access lost"
+msgstr "Доступ к сети утрачен"
+
+msgid "Server is not responding"
+msgstr "Сервер не отвечает"
+
+msgid "Network sync unavailable"
+msgstr "Не удалось обновить данные сети"

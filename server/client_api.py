@@ -83,7 +83,7 @@ def route(method, path, data):
     if path == "/v1/leave":
         return 200, api.leave(data.get("session"))
     if path == "/v1/sync":
-        return 200, api.sync(data.get("session"), data.get("nick"), data.get("avatar_revision"))
+        return 200, api.sync(data.get("session"), data.get("nick"), data.get("avatar_revision"), data.get("network"))
     if path == "/v1/avatar":
         return 200, api.manage(data.get("session"), "avatar", data.get("value"))
     if path == "/v1/manage":
@@ -105,7 +105,7 @@ _REASONS = {msg: msg.lower().replace(" ", "_") for msg in (
     "Invitation already used", "Invitations are disabled", "Waiting for network join",
     "Device identity changed", "Membership revoked", "Session was retired",
     "Node already enrolled", "Existing device session required", "Node or session already enrolled",
-    "Invalid session", "Invalid membership", "Device proof required", "Invalid device proof",
+    "Network deleted", "Invalid session", "Invalid membership", "Device proof required", "Invalid device proof",
     "Device verification unavailable", "Too many login attempts", "Invalid nickname", "Invalid node",
     "Invalid request", "Invalid body size", "Expected a JSON object", "Local service unavailable",
     "Client access only", "Update Uplink to join a logical network", "Unknown private network",

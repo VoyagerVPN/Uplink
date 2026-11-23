@@ -335,14 +335,27 @@ class Invitations:
             db.execute("UPDATE invitations SET device_verified=1 WHERE session=?", (key,))
         return {}
 
-    def sync(self, session, nick, avatar_revision=None):
+    def sync(self, session, nick, avatar_revision=None, network=None):
         key, nick = digest(session), nickname(nick)
         with self.transaction() as db:
             own = db.execute("SELECT * FROM invitations WHERE session=? AND redeemed=1", (key,)).fetchone()
+            saved = own["network"] if own else network
+            if isinstance(saved, str) and re.fullmatch(r"[0-9a-f]{32}", saved):
+                if not db.execute("SELECT 1 FROM groups WHERE id=?", (saved,)).fetchone():
+                    raise ApiError(410, "Network deleted")
             if not own:
+                if isinstance(saved, str) and re.fullmatch(r"[0-9a-f]{16}", saved):
+                    transport = db.execute("SELECT id FROM shared_transport WHERE slot=1").fetchone()
+                    if transport and saved[:10] != transport["id"][:10]:
+                        raise ApiError(410, "Network deleted")
                 raise ApiError(403, "Invalid session")
             endpoint = "/controller/network/" + own["network"]
-            info = self.directory(db, endpoint)
+            try:
+                info = self.directory(db, endpoint)
+            except ApiError as error:
+                if error.status == 404:
+                    raise ApiError(410, "Network deleted") from error
+                raise
             member_path = endpoint + "/member/"
             if not self.directory(db, member_path + own["node"])["authorized"]:
                 raise ApiError(403, "Membership revoked")

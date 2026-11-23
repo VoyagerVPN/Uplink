@@ -33,6 +33,33 @@ pub struct InviteMethods {
     pub password_revision: Option<String>,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Availability {
+    #[default]
+    Available,
+    Unreachable,
+    Deleted,
+    Denied,
+    SyncFailed,
+}
+
+impl Availability {
+    pub fn membership_gone(self) -> bool {
+        matches!(self, Self::Deleted | Self::Denied)
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Available => "",
+            Self::Unreachable => "unreachable",
+            Self::Deleted => "deleted",
+            Self::Denied => "denied",
+            Self::SyncFailed => "sync_failed",
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Membership {
     pub host: String,
@@ -54,6 +81,8 @@ pub struct Membership {
     pub server_ms: Option<u32>,
     #[serde(default)]
     pub health: String,
+    #[serde(default)]
+    pub availability: Availability,
 }
 
 fn home() -> io::Result<PathBuf> {
@@ -125,12 +154,17 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
         })
         .map_err(|err| {
             join_log::number("curl_code", err.code().into());
-            io::Error::other("Could not reach Uplink over HTTPS")
+            io::Error::new(io::ErrorKind::NotConnected, "Could not reach Uplink over HTTPS")
         })?;
     join_log::number("http_status", status.into());
 
     match status {
         200 => Ok((parse_reply(&response)?, latency)),
+        410 if endpoint == "sync" && serde_json::from_slice::<Value>(&response)
+            .is_ok_and(|v| v["error"] == "Network deleted") =>
+        {
+            Err(io::Error::new(io::ErrorKind::NotFound, "Network deleted"))
+        }
         409 if serde_json::from_slice::<Value>(&response)
             .is_ok_and(|v| v["error"] == "Network name already in use") =>
         {
@@ -158,6 +192,7 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
                     | "Invalid device proof"
                     | "Device proof required"
                     | "Membership revoked"
+                    | "Invalid session"
                     | "Existing device session required"
                     | "Node already enrolled"),
                 ) => s,
@@ -522,6 +557,7 @@ pub fn bootstrap(
         rows: Vec::new(),
         server_ms: None,
         health: "ok".into(),
+        availability: Availability::Available,
     })
 }
 
@@ -756,7 +792,7 @@ impl Membership {
         read_interface: impl FnOnce(&str) -> io::Result<Option<Value>>,
     ) -> io::Result<()> {
         let sync =
-            json!({"session":self.session,"nick":nick,"avatar_revision":self.known_avatar(prefs)});
+            json!({"session":self.session,"network":self.id,"nick":nick,"avatar_revision":self.known_avatar(prefs)});
         let mut snapshot = post(&self.host, "sync", sync.clone());
         if snapshot.as_ref().is_ok_and(|v| v["needs_proof"] == true) {
             self.rows.clear();
@@ -774,7 +810,7 @@ impl Membership {
         }
         let avatar_status = match &snapshot {
             Ok(data) if data["id"] == self.id => self.apply_avatar(prefs, data),
-            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            Err(e) if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound) => {
                 self.apply_avatar(prefs, &Value::Null)
             }
             _ => Ok(()),
@@ -813,11 +849,19 @@ impl Membership {
         ms: Option<u32>,
         probe: fn(&str, &str) -> Option<u32>,
     ) -> io::Result<()> {
+        self.availability = match &snapshot {
+            Ok(data) if data["id"] == self.id => Availability::Available,
+            Err(e) if e.kind() == io::ErrorKind::NotFound && e.to_string() == "Network deleted" => Availability::Deleted,
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied && matches!(e.to_string().as_str(), "Invalid session" | "Membership revoked") => Availability::Denied,
+            Err(e) if e.kind() == io::ErrorKind::NotConnected => Availability::Unreachable,
+            _ => Availability::SyncFailed,
+        };
         self.server_ms = ms;
-        if snapshot
+        if self.availability.membership_gone() || snapshot
             .as_ref()
             .is_err_and(|e| e.kind() == io::ErrorKind::PermissionDenied)
         {
+            self.methods = None;
             self.rows.clear();
             self.own_ip.clear();
             return snapshot.map(|_| ());
@@ -1000,6 +1044,23 @@ mod tests {
             .is_err()
         );
         assert!(m.rows.is_empty() && m.own_ip.is_empty());
+    }
+
+    #[test]
+    fn unavailable_networks_keep_their_name_and_recover_after_a_valid_sync() {
+        let mut m: Membership = serde_json::from_value(json!({"host":"example.org","id":"1234",
+            "session":"s","node":"me","name":"Friday","own_ip":"10.0.0.1"})).unwrap();
+        for (kind, reason, expected) in [
+            (io::ErrorKind::NotConnected, "Could not reach Uplink over HTTPS", "unreachable"),
+            (io::ErrorKind::PermissionDenied, "Invalid session", "denied"),
+            (io::ErrorKind::NotFound, "Network deleted", "deleted"),
+        ] {
+            assert!(m.update_status(&Value::Null, Err(io::Error::new(kind, reason)), None, |_, _| panic!()).is_err());
+            assert_eq!(serde_json::to_value(&m).unwrap()["availability"], expected);
+            assert_eq!(m.name, "Friday");
+        }
+        m.update_status(&Value::Null, Ok(json!({"id":"1234","name":"Friday","members":[],"methods":null})), Some(12), |_, _| panic!()).unwrap();
+        assert_eq!(serde_json::to_value(&m).unwrap()["availability"], "available");
     }
 
     #[test]

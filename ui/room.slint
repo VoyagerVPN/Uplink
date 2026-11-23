@@ -14,7 +14,7 @@ import { ListView } from "std-widgets.slint";
 import "../assets/fonts/Inter-Regular.ttf";
 import "../assets/fonts/Inter-SemiBold.ttf";
 
-export struct SavedRoom { name: string, initials: string, url: string, server: string, avatar:image, has-avatar:bool }
+export struct SavedRoom { availability: string, name: string, initials: string, url: string, server: string, avatar:image, has-avatar:bool }
 export struct LanguageChoice { code: string, name: string }
 export struct PingReading { bars: int, ms: int }
 export struct Member { nick: string, ip: string, creator: bool, admin: bool, own: bool, ping: PingReading }
@@ -212,6 +212,11 @@ export component RoomWindow inherits Window {
     in property <string> invite-url;
     in property <string> room-name;
     in property <string> room-server;
+    in property <string> room-availability;
+    function availability-text(status: string) -> string {
+        return status == "deleted" ? @tr("Network deleted") : status == "denied" ? @tr("Network access lost")
+            : status == "unreachable" ? @tr("Server is not responding") : status == "sync_failed" ? @tr("Network sync unavailable") : "";
+    }
     in property <bool> power-on: true;
     in property <string> health: "ok";
     in-out property <bool> autostart;
@@ -415,7 +420,7 @@ export component RoomWindow inherits Window {
                     x: 0px; y: 0px; width: 34px; height: min(rail.height - 31px, root.rooms.length * 41px);
                     for network in root.rooms: ButtonFocus {
                         height: 41px;
-                        accessible-role: button; accessible-label: network.name;
+                        accessible-role: button; accessible-label: network.name + (network.availability == "" ? "" : " · " + root.availability-text(network.availability));
                         accessible-action-default => { root.select-room(network.url); }
                         key-pressed(event) => {
                             if event.text == Key.Return || event.text == Key.Space { root.select-room(network.url); return accept; }
@@ -426,6 +431,7 @@ export component RoomWindow inherits Window {
                             background: network.server == "coop.example" ? #262d32 : network.server == "arena.example" ? #302b27 : network.server == "pine.example" ? #282e29 : network.server == "night.example" ? #2b2930 : #272b2d;
                             border-width: parent.show-focus ? 2px : 1px;
                             border-color: network.url == root.invite-url ? #bfec70 : parent.show-focus ? #a7abb2 : transparent;
+                            opacity: network.availability == "" ? 1 : 0.65;
                             clip:true;
                             if network.has-avatar: Image{x:1px;y:1px;width:30px;height:30px;source:network.avatar;image-fit:cover;}
                             if !network.has-avatar: Label { text: network.initials; font-size: 11px; font-weight: 600; color: network.server == "coop.example" ? #bccbd6 : network.server == "arena.example" ? #d4c7b7 : network.server == "pine.example" ? #bdcdb9 : network.server == "night.example" ? #cac2d5 : #c4c9ca; horizontal-alignment: center; }
@@ -434,7 +440,7 @@ export component RoomWindow inherits Window {
                             x: 0px; y: 0px; width: 34px; height: 34px; mouse-cursor: pointer;
                             pointer-event(event) => { if event.kind == PointerEventKind.down { parent.focus-from-pointer(); } }
                             clicked => { root.select-room(network.url); }
-                            Tooltip { HintCard { message: network.name + " · " + network.server; } }
+                            Tooltip { HintCard { message: network.name + " · " + (network.availability == "" ? network.server : root.availability-text(network.availability)); } }
                         }
                     }
                 }
@@ -459,7 +465,8 @@ export component RoomWindow inherits Window {
                         description: @tr("Copy server address"); copy => { return root.copy(root.room-server); } }
                 }
                 Rectangle { height: 12px; }
-                HorizontalLayout {
+                if root.room-availability != "": Label { text: root.availability-text(root.room-availability); color: #e99087; height: 24px; }
+                if root.room-availability != "deleted" && root.room-availability != "denied": HorizontalLayout {
                     height: 26px; padding-left: 5px; padding-right: 0px; spacing: 0px;
                     SortHeading { caption: @tr("Ping"); width: 63px; selected: root.by-ping; descending: root.descending; invoked => { root.sort-members(true); } }
                     SortHeading { caption: @tr("Members"); horizontal-stretch: 1; selected: !root.by-ping; descending: root.descending; invoked => { root.sort-members(false); } }

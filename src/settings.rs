@@ -450,7 +450,9 @@ pub fn leave(path: &Path, target: Option<&str>) -> io::Result<()> {
                 prefs["live"][target].clone(),
             ) {
                 if live.transport.is_some() {
-                    live.leave_group()?;
+                    if !live.availability.membership_gone() {
+                        live.leave_group()?;
+                    }
                     prefs["live"].as_object_mut().map(|v| v.remove(target));
                 } else {
                     crate::transport::detach(&live.id)?;

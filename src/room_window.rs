@@ -117,6 +117,7 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
     if let Some(room) = rooms.first() {
         ui.set_creator_ip(room.creator_ip.as_str().into());
         ui.set_is_creator(!room.creator_ip.is_empty() && room.creator_ip == room.own_ip);
+        ui.set_room_availability(room.live.as_ref().map_or("", |m| m.availability.code()).into());
         ui.set_room_name(room.name.as_str().into());
         ui.set_room_server(room.server.as_str().into());
         ui.set_invite_url(room.url.as_str().into());
@@ -193,6 +194,7 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
                 avatar::stored(&r.policy.avatar)
             };
             SavedRoom {
+                availability: r.live.as_ref().map_or("", |m| m.availability.code()).into(),
                 has_avatar: image.is_some(),
                 avatar: image.unwrap_or_default(),
                 initials: if r.url == invite::PINE && r.name == "Еловый бор" {
