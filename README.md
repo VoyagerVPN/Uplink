@@ -6,7 +6,7 @@ Uplink connects Windows PCs to a self-hosted virtual LAN. The desktop client use
 
 ## Join a self-hosted instance
 
-Run **Uplink-Setup.exe** and choose **Install**. Use the folder icon to change the installation directory. Upgrades reuse the existing path. Open Uplink and paste an invitation from the instance owner. On the first connection, Windows may ask you to approve ZeroTier setup under the same account. To host an instance, see the [server guide](server/README.md). Deploying a fresh VPS from the Windows client is still on the roadmap.
+Run **Uplink-Setup.exe** and choose **Install**. Use the folder icon to change the installation directory. Upgrades reuse the existing path. Open Uplink and paste an invitation from the instance owner. On the first connection, Windows may ask you to approve ZeroTier setup under the same account. To host an instance, see the [server guide](server/README.md). In 0.2.0, choose **Join network → Create a network on my VPS**. The wizard accepts a password or SSH key and asks for the server’s Ed25519 fingerprint on first use. A fresh installation supports Ubuntu 24.04 or Debian 12 (x86-64), public IPv4, TCP 80/443 and UDP 9993.
 
 The controller assigns virtual addresses. Uplink updates nicknames and the member list over HTTPS. Your row shows API response time. Other rows show ICMP latency to each member's virtual address. Turning Uplink off disconnects its networks from ZeroTier. Turning it back on restores saved connections.
 

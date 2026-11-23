@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 mod avatar;
 mod network_window;
+mod vps_window;
 mod placement;
 mod setup_window;
 mod tray_menu;
@@ -225,7 +226,8 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
 }
 
 fn open_pending_invite(ui: &RoomWindow, path: &Path) {
-    if ui.global::<NetworkUi>().get_joining() {
+    let net = ui.global::<NetworkUi>();
+    if ui.get_creating_network() || net.get_joining() || (ui.get_adding_network() && !net.get_join_failure().is_empty()) {
         return;
     }
     match settings::take_invite(path) {
@@ -254,6 +256,8 @@ fn start_join(
     }
     ui.set_error("".into());
     net.set_error("".into());
+    ui.set_adding_network(true);
+    net.set_join_failure("".into());
     net.set_join_step(settings::JoinStage::Access as i32);
     net.set_joining(true);
     let weak = ui.as_weak();
@@ -264,26 +268,37 @@ fn start_join(
                 ui.global::<NetworkUi>().set_join_step(step as i32)
             });
         };
-        let result = join(&path, &progress);
+        let result = join(&path, &progress).and_then(|()| settings::rooms(&path));
         let _ = weak.upgrade_in_event_loop(move |ui| {
-            ui.global::<NetworkUi>().set_joining(false);
-            finish_room_change(&ui, &path, result);
-            open_pending_invite(&ui, &path);
+            let net = ui.global::<NetworkUi>();
+            if let Err(error) = &result {
+                let message =
+                    uplink::i18n::error_message(&ui.get_language_code(), &error.to_string())
+                        .to_owned();
+                net.set_join_failure(message.into());
+            }
+            net.set_joining(false);
+            if let Ok(rooms) = result {
+                apply_room_change(&ui, rooms);
+                open_pending_invite(&ui, &path);
+            }
         });
     });
 }
 
 fn finish_room_change(ui: &RoomWindow, prefs: &Path, result: io::Result<()>) {
     match result.and_then(|()| settings::rooms(prefs)) {
-        Ok(rooms) => {
-            apply_rooms(ui, rooms);
-            ui.set_adding_network(false);
-            ui.set_pending_link("".into());
-            ui.set_error("".into());
-            uplink::control::refresh_tray_icon();
-        }
+        Ok(rooms) => apply_room_change(ui, rooms),
         Err(e) => show_error(ui, e),
     }
+}
+
+fn apply_room_change(ui: &RoomWindow, rooms: Vec<settings::Room>) {
+    apply_rooms(ui, rooms);
+    ui.set_adding_network(false);
+    ui.set_pending_link("".into());
+    ui.set_error("".into());
+    uplink::control::refresh_tray_icon();
 }
 
 fn apply_options(ui: &RoomWindow, options: settings::Options, autostart: bool) {
@@ -343,6 +358,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err(io::Error::other("Unknown invitation").into());
     }
     let path = Rc::new(settings::path()?);
+    vps_window::bind(&window, &path);
     update_window::bind(&window, &path)?;
     apply_language(&window, &settings::language(&path)?);
     let weak = window.as_weak();
@@ -432,6 +448,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &prefs,
             settings::rename_selected(&prefs, Some(&ui.get_invite_url()), name.as_str()),
         );
+    });
+    let weak = window.as_weak();
+    let prefs = path.clone();
+    window.on_join_dialog_closed(move || {
+        if let Some(ui) = weak.upgrade() {
+            open_pending_invite(&ui, &prefs);
+        }
     });
     let weak = window.as_weak();
     let prefs = path.clone();

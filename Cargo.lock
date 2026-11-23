@@ -5089,7 +5089,7 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
 name = "uplink"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "base64",
  "clipboard-win",

@@ -811,6 +811,13 @@ msgstr "Скопировать адрес сервера"
 msgid "Joining network"
 msgstr "Подключение к сети"
 
+msgid "Could not join network"
+msgstr "Не удалось подключиться"
+
+msgctxt "native"
+msgid "Windows denied read access to the ZeroTier root file (planet)."
+msgstr "Windows запретила чтение файла конфигурации ZeroTier (planet)."
+
 msgid "Check network access"
 msgstr "Проверка доступа к сети"
 
@@ -886,3 +893,140 @@ msgstr "Сервер ожидает прежний сеанс этого уст�
 msgctxt "native"
 msgid "Node already enrolled"
 msgstr "Устройство уже зарегистрировано в этой сети."
+
+msgid "Create a network on my VPS"
+msgstr "Создать сеть на своём VPS"
+
+msgid "VPS access"
+msgstr "Доступ к VPS"
+
+msgid "Verify your VPS"
+msgstr "Подтвердите ваш VPS"
+
+msgid "Network created"
+msgstr "Сеть создана"
+
+msgid "Create network"
+msgstr "Создать сеть"
+
+msgid "Use the server address and login from your hosting provider."
+msgstr "Адрес сервера и логин есть в письме или панели хостера."
+
+msgid "Server IP address"
+msgstr "IP-адрес сервера"
+
+msgid "SSH port"
+msgstr "Порт SSH"
+
+msgid "SSH key"
+msgstr "SSH-ключ"
+
+msgid "VPS password"
+msgstr "Пароль от VPS"
+
+msgid "Enter the VPS password."
+msgstr "Введите пароль от VPS."
+
+msgid "Choose SSH key"
+msgstr "Выбрать SSH-ключ"
+
+msgid "Choose your private key file."
+msgstr "Выберите файл закрытого ключа."
+
+msgid "Only have an IP and login?"
+msgstr "Есть только IP и логин?"
+
+msgid "Open the access section in your VPS dashboard to set a password or choose a key."
+msgstr "Откройте раздел доступа в панели VPS. Там можно задать пароль или выбрать ключ."
+
+msgid "VPS SSH fingerprint"
+msgstr "Отпечаток SSH-ключа VPS"
+
+msgid "Copy the Ed25519 fingerprint from the VPS dashboard or ask your hosting provider for it."
+msgstr "Скопируйте отпечаток Ed25519 из панели VPS. Если его там нет, запросите у хостера."
+
+msgid "Uplink will install the server, create the network and connect you as its owner."
+msgstr "Uplink установит сервер, создаст сеть и подключит вас как владельца."
+
+msgid "Install and create network"
+msgstr "Установить и создать сеть"
+
+msgid "Continue"
+msgstr "Далее"
+
+msgid "Verify SSH access"
+msgstr "Проверка доступа по SSH"
+
+msgid "Set up the server and network"
+msgstr "Установка сервера и создание сети"
+
+msgid "Connect this PC"
+msgstr "Подключение этого компьютера"
+
+msgid "Assign owner and get invitation"
+msgstr "Назначение владельца и приглашение"
+
+msgid "Send this invitation to a friend."
+msgstr "Отправьте это приглашение другу."
+
+msgid "Copy invitation"
+msgstr "Скопировать приглашение"
+
+msgid "Invitation"
+msgstr "Приглашение"
+
+msgctxt "native"
+msgid "Enter a network name (1 to 64 characters)."
+msgstr "Введите название сети (от 1 до 64 символов)."
+
+msgctxt "native"
+msgid "Enter an IPv4 address."
+msgstr "Введите IPv4-адрес."
+
+msgctxt "native"
+msgid "Enter a port from 1 to 65535."
+msgstr "Введите порт от 1 до 65535."
+
+msgctxt "native"
+msgid "Enter the SSH login."
+msgstr "Введите логин для SSH."
+
+msgctxt "native"
+msgid "Enter the SHA256 fingerprint from your hosting provider."
+msgstr "Вставьте отпечаток из панели хостера. Он начинается с SHA256:."
+
+msgctxt "native"
+msgid "Could not verify the VPS Ed25519 fingerprint."
+msgstr "Не удалось сверить ключ VPS. Проверьте адрес, порт и отпечаток Ed25519."
+
+msgctxt "native"
+msgid "The SSH setup session ended. Check the login, key and administrator access."
+msgstr "Сеанс SSH завершился. Проверьте логин, способ входа и права администратора."
+
+msgctxt "native"
+msgid "Invalid invitation from the VPS."
+msgstr "VPS вернул некорректное приглашение."
+
+msgctxt "native"
+msgid "Expected Ubuntu 24.04 or Debian 12 on x86_64"
+msgstr "Нужен VPS с Ubuntu 24.04 или Debian 12 и процессором x86-64."
+
+msgctxt "native"
+msgid "The VPS requires systemd"
+msgstr "Для установки нужен VPS с systemd."
+
+msgctxt "native"
+msgid "Existing unmanaged Uplink instance; installation stopped"
+msgstr "На VPS есть другая установка Uplink. Установка остановлена."
+
+msgctxt "native"
+msgid "Enter a VPS password or choose an SSH key."
+msgstr "Введите пароль от VPS или выберите SSH-ключ."
+
+msgctxt "native"
+msgid "HTTP Error 403: Forbidden"
+msgstr "Сервер загрузки отклонил запрос VPS на получение ZeroTier."
+
+msgctxt "native"
+msgid "SSH file not found"
+msgstr "Файл SSH-ключа не найден."

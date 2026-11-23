@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory,ParameterSetName='Link')][string]$Invitation,
     [Parameter(Mandatory,ParameterSetName='Input')][switch]$ReadInvitation,
-    [switch]$Headless
+    [switch]$Headless,
+    [switch]$RepairPlanet
 )
 if ($ReadInvitation) { $Invitation = [Console]::In.ReadLine() }
 $ErrorActionPreference = 'Stop'
@@ -81,8 +82,24 @@ function Set-SecretAccess([string]$path, [bool]$clientAccess) {
     Set-Acl -LiteralPath $path -AclObject $rules
 }
 
+function Grant-PlanetRead {
+    Assert-RegularPath $planetPath
+    $rootFile = Get-Item -Force -LiteralPath $planetPath
+    if ($rootFile.PSIsContainer -or $rootFile.LinkType -eq 'HardLink' -or $rootFile.Length -ne $planet.Length) { throw $foreign }
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($planetPath)) -cne $info.planet) { throw $foreign }
+    $rootAcl = Get-Acl -LiteralPath $planetPath
+    $rootAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.SecurityIdentifier]::new($who),'Read','Allow'))
+    Set-Acl -LiteralPath $planetPath -AclObject $rootAcl
+}
+
 $failureCode = 32
 if (Test-Path -LiteralPath $base) { Assert-PrivateDirectory $base }
+if ($RepairPlanet) {
+    Assert-PrivateDirectory $dir
+    Grant-PlanetRead
+    return
+}
 $service = Get-Service ZeroTierOneService -ErrorAction SilentlyContinue
 $needsMsi = !$service
 $exists = Test-Path -LiteralPath $dir
@@ -164,8 +181,7 @@ do {
 } until ($ready -or [DateTime]::UtcNow -ge $deadline)
 if (!$ready) { throw 'Служба ZeroTier ещё не подготовила локальную идентичность. Повторите установку.' }
 Assert-PrivateDirectory $dir
-Assert-RegularPath $planetPath
-if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($planetPath)) -cne $info.planet) { throw $foreign }
+Grant-PlanetRead
 if ($needsMsi) {
     $receipt = Join-Path $dir '.uplink-owner'
     Assert-RegularPath $receipt

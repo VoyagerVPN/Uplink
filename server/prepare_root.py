@@ -69,6 +69,55 @@ def prepare(bundle, address, port, zerotier):
             check_bundle(bundle, endpoint)
 
 
+def prepare_instance(bundle, runtime, address, port, zerotier, service_user):
+    import fcntl
+    import pwd
+
+    account = pwd.getpwnam(service_user)
+    files = ("identity.secret", "identity.public", "planet")
+    bundle = bundle.parent.resolve(strict=True) / bundle.name
+    runtime = runtime.parent.resolve(strict=True) / runtime.name
+    if bundle == runtime or bundle in runtime.parents or runtime in bundle.parents:
+        raise ValueError("Signing and runtime directories must be separate")
+    # Родитель runtime принадлежит установщику. Сериализуем первичную установку и повторы.
+    parent = os.open(runtime.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(parent, fcntl.LOCK_EX)
+        exists = os.path.lexists(runtime)
+        if exists and not os.path.lexists(bundle):
+            raise ValueError("Existing runtime has no matching signing directory")
+        prepare(bundle, address, port, zerotier)
+        if exists:
+            directory = os.open(runtime.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            try:
+                info = os.fstat(directory)
+                if info.st_uid != account.pw_uid or info.st_mode & 0o077:
+                    raise ValueError("Unexpected runtime owner or permissions")
+                for name in files:
+                    expected = (bundle / name).read_bytes()
+                    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                    with os.fdopen(fd, "rb") as source:
+                        info = os.fstat(source.fileno())
+                        if (not stat.S_ISREG(info.st_mode) or info.st_uid != account.pw_uid
+                                or info.st_mode & 0o077 or source.read(len(expected) + 1) != expected):
+                            raise ValueError("Runtime identity or planet does not match the signed root")
+            finally:
+                os.close(directory)
+            return
+        with tempfile.TemporaryDirectory(dir=runtime.parent, prefix=".uplink-install-") as temp:
+            stage = Path(temp) / "runtime"
+            stage.mkdir(mode=0o700)
+            for name in files:
+                dest = stage / name
+                dest.write_bytes((bundle / name).read_bytes())
+                dest.chmod(0o600)
+                os.chown(dest, account.pw_uid, account.pw_gid)
+            os.chown(stage, account.pw_uid, account.pw_gid)
+            stage.rename(runtime)
+    finally:
+        os.close(parent)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path, help="Private directory in a trusted parent")
@@ -76,9 +125,17 @@ if __name__ == "__main__":
     parser.add_argument("port", type=int, help="External UDP port forwarded to the root")
     parser.add_argument("--zerotier", type=Path,
                         default=Path("/opt/uplink-zt/1.16.2/usr/sbin/zerotier-one"))
+    parser.add_argument("--runtime", type=Path, help="Initialize or verify the controller's state directory")
+    parser.add_argument("--service-user", default="uplink-zt", help="Owner of the controller's state directory")
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        prepare(args.bundle.absolute(), args.address, args.port, args.zerotier)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        if args.runtime:
+            if os.name != "posix":
+                raise ValueError("Run private root setup on the Linux server")
+            prepare_instance(args.bundle.absolute(), args.runtime.absolute(), args.address, args.port,
+                             args.zerotier, args.service_user)
+        else:
+            prepare(args.bundle.absolute(), args.address, args.port, args.zerotier)
+    except (KeyError, OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Private root setup failed: {error}\n")

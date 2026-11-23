@@ -104,6 +104,13 @@ Earlier results with one adapter per network:
 - [x] Run the Windows installer silently in an SSH service session on a second physical PC. Verify a stopped window and exercise the development CLI's headless join with an isolated demo profile. This checks the unattended UI path on one LAN. The live two-client test below remains open.
 
 - [ ] Let the owner create their first network on a rented VPS from the Windows client. After the owner grants access, a single action installs the Uplink server, creates the network and returns an invitation for friends. Subsequent networks reuse the installed server.
+- [x] Carry the prototype's field validation into the Rust/Slint setup screens. On submission, show red text directly below each invalid field and focus the first one. Clear the message when corrected. Use the same behavior for Enter and the submit button.
+- [x] Exercise the owner and friend journeys in an offline GUI prototype, including first-use host verification, a second network on the same VPS and joining by invitation. SSH access and installation are simulated in this check.
+- [x] Start with a generic public IPv4 VPS over SSH. The Windows CLI checks basic Linux prerequisites using a trusted SSH host key. Checked a successful authenticated probe and rejection of both unknown and changed keys on a loopback SSH fixture.
+- [x] Initialize or verify the controller runtime from the signed root. On an isolated Linux controller a repeat preserved the identity, private planet, network and an existing invitation across a restart.
+- [x] Connect the native wizard and headless CLI to SSH deployment, first-owner enrollment and a separate friend invitation. The SSH key is pinned before authentication. Retry keeps the pending group ID. The installer supports a generic public IPv4 or an existing reverse proxy.
+- [x] Reinstall on service 129 behind the existing proxy. Check invitation bootstrap over public HTTPS and a nonce from external UDP 30000 to internal UDP 9993. Separate Linux peers on an isolated bridge confirmed owner/member roles and UDP echo after interrupting and resuming network creation.
+- [ ] Run the full installed Windows owner and friend journey on a dedicated public IPv4, including issuance and renewal from a publicly trusted CA. Provider panel integration is deferred.
 
 Uplink's test instance is ServerHQ service 129.
 
@@ -188,12 +195,15 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [ ] If final controller writes are slow in practice, coordinate authorization with revocation and shared transport tag updates before moving those writes outside the SQLite transaction.
 - [ ] Verify an uninterrupted first-time MSI installation and device proof provisioning on another clean Windows system.
 
+
 ## Joining a network
 
 - [x] Open a centered join dialog from the network rail or the empty network list. Keep both sign-in methods and connection progress inside the dialog. Restore the entered values on failure.
 - [x] Show a copy icon to the right of the selected network's server address on hover. Keep the check visible for two seconds after copying, including when the pointer leaves.
 - [x] Network managers can reveal a password they saved on this Windows profile after reopening settings. Protect the local copy with per-user DPAPI and check the server's password revision when available.
 - [x] Show progress for an invitation or password join, including links opened from another application. Clear the previous error when retrying and keep the form available after failure.
+- [x] Keep all four steps visible after a failed join. Mark the failed step with a cross and its error, allow retry with the same details, and return to the filled form on Back.
+- [x] Grant the joining Windows account read access to its verified ZeroTier planet. For an existing setup, repair a read denial once with elevation and verify the file again before enrollment.
 - [x] Confirm invitation copying with the same two-second check as IP copying. Let users copy the server address from the network and both the address and network name from password invitations.
 - [x] Identify API stages and rejection reasons in the server journal. Correlate ticket issuance and enrollment without exposing the ticket, password, session or device proof.
 - [x] Record the join method, timed local operations and available Windows, process, curl and HTTP codes in the Windows join log. Cover link, password and headless joins without logging credentials or raw diagnostic text.

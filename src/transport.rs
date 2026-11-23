@@ -303,10 +303,7 @@ fn incomplete_device_proof_is_prepared_again() {
     assert!(device_is_prepared(home));
 }
 
-fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result<()> {
-    if device_is_prepared(home) {
-        return Ok(());
-    }
+fn run_device_helper(host: &str, token: &str, action: &'static str) -> io::Result<()> {
     join_log::operation("locate_setup_helper");
     let helper = std::env::current_exe()?.with_file_name("UplinkNetwork.exe");
     if !helper.is_file() {
@@ -337,11 +334,15 @@ fn prepare_device(home: &std::path::Path, host: &str, token: &str) -> io::Result
         std::env::var_os("SystemRoot").ok_or_else(|| io::Error::other("Missing Windows path"))?,
     )
     .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    join_log::operation("run_setup_helper");
+    join_log::operation(if action == "repair-planet" {
+        "repair_planet_access"
+    } else {
+        "run_setup_helper"
+    });
     let result = Command::new(ps)
         .args(["-NoProfile","-NonInteractive","-Command",
-            "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; try { $p=Start-Process -FilePath $env:UPLINK_NETWORK_HELPER -Verb RunAs -ArgumentList ('prepare '+$sid+' '+$env:UPLINK_NETWORK_REQUEST) -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { if ($_.Exception.GetBaseException().NativeErrorCode -eq 1223) {exit 38}; exit 2 }"])
-        .env("UPLINK_NETWORK_HELPER",helper).env("UPLINK_NETWORK_REQUEST",request)
+            "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; try { $p=Start-Process -FilePath $env:UPLINK_NETWORK_HELPER -Verb RunAs -ArgumentList ($env:UPLINK_HELPER_MODE+' '+$sid+' '+$env:UPLINK_NETWORK_REQUEST) -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { if ($_.Exception.GetBaseException().NativeErrorCode -eq 1223) {exit 38}; exit 2 }"])
+        .env("UPLINK_HELPER_MODE",action).env("UPLINK_NETWORK_HELPER",helper).env("UPLINK_NETWORK_REQUEST",request)
         .creation_flags(0x08000000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
     drop(guard);
     let _ = fs::remove_dir(root);
@@ -395,6 +396,76 @@ fn verify_planet(home: &std::path::Path, expected: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+fn check_planet_access(
+    check: impl Fn() -> io::Result<()>,
+    repair: Option<impl FnOnce() -> io::Result<()>>,
+) -> io::Result<()> {
+    let mut result = check();
+    if let Err(error) = &result
+        && error.kind() == io::ErrorKind::PermissionDenied
+        && let Some(repair) = repair
+    {
+        if let Some(code) = error.raw_os_error() {
+            join_log::number("win32", code.into());
+        }
+        repair()?;
+        result = check();
+    }
+    result.map_err(|error| {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            if let Some(code) = error.raw_os_error() {
+                join_log::number("win32", code.into());
+            }
+            io::Error::new(
+                error.kind(),
+                "Windows denied read access to the ZeroTier root file (planet).",
+            )
+        } else {
+            error
+        }
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn planet_access_rechecks_after_one_repair_and_never_accepts_a_different_root() {
+    use std::cell::Cell;
+    for accessible in [true, false] {
+        let repaired = Cell::new(false);
+        let result = check_planet_access(
+            || {
+                if repaired.get() && accessible {
+                    Ok(())
+                } else {
+                    Err(io::Error::from_raw_os_error(5))
+                }
+            },
+            Some(|| {
+                assert!(!repaired.replace(true));
+                Ok(())
+            }),
+        );
+        assert!(repaired.get());
+        if accessible {
+            result.unwrap();
+        } else {
+            let e = result.unwrap_err();
+            assert_eq!(
+                crate::i18n::error_message("ru", &e.to_string()),
+                "Windows запретила чтение файла конфигурации ZeroTier (planet)."
+            );
+        }
+    }
+    let mismatch = || {
+        Err(io::Error::other(
+            "This network requires a different ZeroTier root configuration",
+        ))
+    };
+    assert!(
+        check_planet_access(mismatch, Some(|| panic!("Do not repair mismatched roots"))).is_err()
+    );
+}
+
 pub fn bootstrap(
     host: &str,
     token: &str,
@@ -417,10 +488,15 @@ pub fn bootstrap(
         return Err(io::Error::other("Invalid ZeroTier root"));
     }
     progress(crate::settings::JoinStage::Device);
-    if allow_setup_prompt {
-        prepare_device(&home, host, token)?;
+    let setup_needed = allow_setup_prompt && !device_is_prepared(&home);
+    if setup_needed {
+        run_device_helper(host, token, "prepare")?;
     }
-    verify_planet(&home, &planet)?;
+    check_planet_access(
+        || verify_planet(&home, &planet),
+        (allow_setup_prompt && !setup_needed)
+            .then_some(|| run_device_helper(host, token, "repair-planet")),
+    )?;
     join_log::operation("read_network_ids");
     Ok(Membership {
         host: host.into(),

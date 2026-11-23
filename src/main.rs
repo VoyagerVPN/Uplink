@@ -26,6 +26,16 @@ fn report(error: &dyn std::fmt::Display) {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(password) = std::env::var_os("UPLINK_SSH_ASKPASS") {
+        if std::env::args()
+            .nth(1)
+            .is_some_and(|p| p.trim_end().ends_with("password:"))
+        {
+            use std::io::Write;
+            writeln!(io::stdout().lock(), "{}", password.to_string_lossy())?;
+        }
+        return Ok(());
+    }
     let args: Vec<_> = std::env::args().skip(1).collect();
     let updated = if let [flag, pid] = args.as_slice()
         && flag == "--after-update"

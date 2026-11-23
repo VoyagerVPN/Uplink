@@ -8,5 +8,6 @@ pub mod peers;
 pub mod settings;
 pub mod transport;
 pub mod updates;
+pub mod vps;
 
 pub mod startup;

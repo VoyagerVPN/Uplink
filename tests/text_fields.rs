@@ -263,7 +263,7 @@ fn clicking_outside_commits_once_and_preserves_the_clicked_control() {
     click(&ui, 68., 174.);
     assert!(ui.get_adding_network());
     key(&ui, "second");
-    click(&ui, 335., 311.);
+    click(&ui, 335., 291.);
     assert!(!ui.get_editing());
     assert_eq!(*saved.borrow(), ["Ranazy1", "Ranazy12", "Ranazy123"]);
     assert_eq!(*joined.borrow(), ["abc", "second"]);
@@ -431,11 +431,11 @@ fn saved_network_password_can_be_revealed_again_without_resubmitting_it() {
 
 #[test]
 fn credentials_submit_server_name_and_secret_from_the_native_form() {
-    let (ui, _) = open();
+    let (ui, surface) = open();
     let net = ui.global::<NetworkUi>();
     click(&ui, 68., 174.);
     assert!(ui.get_adding_network());
-    click(&ui, 274., 273.);
+    click(&ui, 274., 253.);
     let args = Rc::new(RefCell::new(Vec::new()));
     let sent = args.clone();
     net.on_login(move |server, name, password| {
@@ -456,10 +456,22 @@ fn credentials_submit_server_name_and_secret_from_the_native_form() {
     platform::update_timers_and_animations();
     click(&ui, 5., 5.);
     assert!(ui.get_adding_network());
+    net.set_join_step(2);
+    net.set_join_failure("Windows denied access to the ZeroTier root file (planet).".into());
     net.set_joining(false);
-    ui.set_error("Connection failed".into());
     platform::update_timers_and_animations();
+    let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+    surface.request_redraw();
+    surface.draw_if_needed(|r| { r.render(&mut pixels, 388); });
+    let red = |p: &slint::Rgb8Pixel| p.r > 170 && p.r as u16 > p.g as u16 + 45;
+    assert!(pixels.chunks(388).any(|row| row[34..58].iter().any(red)), "Failed step has a red marker");
     args.borrow_mut().clear();
+    click(&ui, 304., 370.);
+    assert_eq!(args.borrow().as_slice(), ["after-hours.example", "После работы", "ui-fixture"]);
+    args.borrow_mut().clear();
+    click(&ui, 223., 370.);
+    assert!(net.get_join_failure().is_empty());
+    assert!(ui.get_adding_network());
     key(&ui, Key::Return);
     key(&ui, Key::Return);
     key(&ui, Key::Return);
@@ -478,4 +490,49 @@ fn version_opens_release_notes_without_starting_download() {
     assert_eq!(update.get_phase(), UpdatePhase::Found);
     key(&ui, Key::Escape);
     assert!(!update.get_dialog_open());
+}
+
+#[test]
+fn vps_wizard_validates_fields_and_submits_the_confirmed_request() {
+    let (ui, surface) = open();
+    let wizard = ui.global::<VpsUi>();
+    wizard.on_check(|field, value| uplink::vps::field_error(&field, &value).into());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let seen = calls.clone();
+    wizard.on_install(move |name,ip,port,user,password,key,fp| {
+        seen.borrow_mut().push([name,ip,port,user,password,key,fp].map(|s|s.to_string()));
+    });
+    let primary = || {
+        platform::update_timers_and_animations();
+        let mut pixels = vec![slint::Rgb8Pixel::default();388*540];
+        surface.request_redraw();
+        surface.draw_if_needed(|r| { r.render(&mut pixels,388); });
+        let rows: Vec<_> = pixels.chunks(388).enumerate().filter(|(_,row)| {
+            row.iter().filter(|p|p.g>185 && p.r>130 && p.b<150).count()>125
+        }).map(|(y,_)|y).collect();
+        assert!(!rows.is_empty());
+        click(&ui,194.,rows[rows.len()/2] as f32);
+    };
+    ui.set_creating_network(true);
+    primary();
+    key(&ui,"Co-op");
+    key(&ui,Key::Return);
+    primary();
+    key(&ui,"192.0.2.10");
+    key(&ui,Key::Return);
+    key(&ui,"root");
+    key(&ui,Key::Return);
+    key(&ui,"fixture");
+    key(&ui,Key::Return);
+    primary();
+    let fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    key(&ui,fingerprint);
+    key(&ui,Key::Return);
+    primary();
+    assert_eq!(calls.borrow().len(),1);
+    assert_eq!(calls.borrow()[0], ["Co-op","192.0.2.10","22","root","fixture","",fingerprint]);
+    wizard.set_step(2);
+    wizard.set_failure("Fixture failure".into());
+    click(&ui,4.,4.);
+    assert!(!ui.get_creating_network());
 }

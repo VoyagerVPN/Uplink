@@ -15,15 +15,37 @@ The Linux instance runs a private ZeroTier root and controller, a local API for 
 
 A test client needs the signed public `planet` file and the network ID. Replacing `planet` in an existing ZeroTier installation affects every network it uses. Test clients use separate state directories. Each client generates its own key pair, presents a single-use invitation and waits for the controller to register its join request. The owner can also manage membership through the Unix socket. Admission requires authorization even if the client already has the public file and network ID.
 
+## Create a network from Windows
+
+In Uplink 0.2.0 choose **Join network → Create a network on my VPS**. Enter the network name, IPv4 address, SSH port and login. Authenticate with a VPS password or an SSH identity file. The client verifies the Ed25519 host key against the SHA256 fingerprint from the provider before sending credentials. Root or passwordless sudo is required. Saved host fingerprints and pending creation IDs are local to the Windows profile. Uplink keeps SSH credentials in process memory.
+
+For a new public IPv4 server, use a clean Ubuntu 24.04 or Debian 12 x86-64 installation with systemd, Python 3 and free TCP 80/443 and UDP 9993. Allow these ports in the provider and host firewalls. The installer verifies the pinned vendor package, sets up a private ZeroTier controller and starts the Uplink services. Nginx serves the HTTP-01 challenge and forwards HTTPS to the loopback client API. Certbot requests a short-lived IP certificate and a systemd timer renews it twice daily. The remote package source must be reachable. The private controller does not need a TAP/TUN device.
+
+The owner joins using the regular device proof flow. The installer assigns ownership through the root-only socket and returns a separate invitation for friends. After an interruption, retry the same name on the same VPS to reuse the pending network. Later networks reuse the existing controller. Windows installations already using another private ZeroTier root stop before replacing that root.
+
+For headless use, send a JSON request to **uplinkctl vps create** on stdin. Required fields are `name`, `ip`, `port`, `user`, `fingerprint` and either `password` or `identity`. The caller receives the friend invitation on stdout after enrollment. Keep credentials and returned invitations out of logs. Headless owner enrollment requires a previously prepared Windows transport.
+
+If the host already provides trusted HTTPS and port forwarding, the CLI accepts an existing `public_host`, private `proxy_bind` and external `udp_port` for first installation. Forward HTTPS to `proxy_bind:8930` and the external UDP port to 9993. Subsequent GUI runs on this endpoint read its saved configuration. Provider panel automation is separate.
+
+## Check a VPS from Windows
+
+For the first deployment target, use a Linux VPS with a public IPv4 address and SSH key authentication. The development CLI runs a read-only preflight over one SSH connection:
+
+```powershell
+uplinkctl vps check 192.0.2.10 22 ubuntu
+```
+
+The preflight uses Windows OpenSSH, its default identity files or agent, and its known hosts. To select specific files, append `--identity FILE` or `--known-hosts FILE`. Verify the SSH host fingerprint with the VPS owner before adding it to the trust store. The report includes the OS, architecture, systemd as PID 1, the TUN device, Python 3, the privilege probe and the presence of a Uplink runtime directory. An SSH success can return `base_checks_passed: false`; this flag covers local prerequisites only. External UDP, HTTPS and installation of the services require separate verification.
+
 ## Prepare a private root on a new Linux host
 
 With the verified ZeroTier One 1.16.2 binary installed at the path above, run this as the instance owner with root permissions. Substitute the public IPv4 address and externally mapped UDP port for the documentation example.
 
 ```sh
-python3 prepare_root.py /var/lib/uplink-zt-signing 192.0.2.10 30000
+python3 prepare_root.py /var/lib/uplink-zt-signing 192.0.2.10 30000 --runtime /var/lib/uplink-zt
 ```
 
-The command stages fresh keys and publishes the bundle after signing the planet. Repeating it for the same endpoint keeps the identity and planet. An incomplete bundle or a different endpoint requires operator attention. Protect the entire signing directory as a root-only backup. On a new, empty controller installation, place copies of `identity.secret`, `identity.public` and `planet` in `/var/lib/uplink-zt`, owned by `uplink-zt` with mode `0600`, before starting the service. Keep `world.json` in the signing directory. The bundle prepares the private root. UDP forwarding, TLS and systemd installation remain separate deployment steps.
+Create the `uplink-zt` system user first. With `--runtime`, the command needs a trusted parent directory and initializes a new controller directory with `identity.secret`, `identity.public` and `planet`, owned by the service account with mode `0600`. Subsequent runs verify those files against the signing bundle and preserve existing networks. A missing signing bundle for an existing runtime, mismatched files or a changed endpoint stops preparation. Keep the signing directory, including `world.json`, in a root-only backup. Omit `--runtime` to prepare the signing bundle alone. For the complete installation use the Windows creation flow above.
 
 ## Owner API
 

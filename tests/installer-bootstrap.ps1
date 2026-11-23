@@ -65,11 +65,11 @@ function Start-Process {
     }
     @{ExitCode=$state.msiExit}
 }
-function Run-Installer {
+function Run-Installer([switch]$RepairPlanet) {
     $before = [Console]::In
     try {
         [Console]::SetIn([IO.StringReader]::new($invitation))
-        & (Join-Path $testRoot 'install-transport.ps1') -ReadInvitation -Headless:([bool]$state.headless)
+        & (Join-Path $testRoot 'install-transport.ps1') -ReadInvitation -Headless:([bool]$state.headless) -RepairPlanet:$RepairPlanet
     } finally { [Console]::SetIn($before) }
 }
 function Expect-Error([scriptblock]$action,[string]$pattern) {
@@ -117,8 +117,23 @@ try {
     $grants = $tokenAcl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
     $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     Assert ($grants.Where({ $_.IdentityReference.Value -eq $userSid -and $_.AccessControlType -eq 'Allow' }).Count -eq 1) 'Client cannot read its local API token'
+    $rootGrants = (Get-Acl -LiteralPath (Join-Path $ztDir 'planet')).GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier])
+    $read = [Security.AccessControl.FileSystemRights]::Read
+    Assert ($rootGrants.Where({ $_.IdentityReference.Value -eq $userSid -and $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights -band $read) -eq $read -and !($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::WriteData) }).Count -eq 1) 'Missing read-only access to planet for the joining Windows user'
     $expected = [IO.File]::ReadAllBytes((Join-Path $ztDir 'planet'))
+    $planetPath = Join-Path $ztDir 'planet'
+    $restricted = Get-Acl -LiteralPath $planetPath
+    $restricted.PurgeAccessRules([Security.Principal.SecurityIdentifier]::new($userSid))
+    Set-Acl -LiteralPath $planetPath -AclObject $restricted
+    $state.service.Status = 'Stopped'
+    Run-Installer -RepairPlanet
+    $repaired = (Get-Acl -LiteralPath $planetPath).GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier])
+    Assert ($repaired.Where({$_.IdentityReference.Value -eq $userSid -and ($_.FileSystemRights -band $read) -eq $read}).Count -eq 1) 'Repair did not restore read access'
+    Assert ($state.service.Status -eq 'Stopped' -and $state.installCalls -eq 2 -and $state.proofs -eq 2) 'Planet repair touched the service or device keys'
     $testPlanet = [Convert]::ToBase64String([byte[]](2..101))
+    $before = (Get-Acl -LiteralPath $planetPath).Sddl
+    Expect-Error { Run-Installer -RepairPlanet } 'друг|совпад'
+    Assert ((Get-Acl -LiteralPath $planetPath).Sddl -ceq $before) 'Granted access to a mismatched root'
     Expect-Error { Run-Installer } 'друг|совпад'
     Assert ([Convert]::ToBase64String($expected) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $ztDir 'planet')))) 'Overwrote foreign root'
     $state.service = $null

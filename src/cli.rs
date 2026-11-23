@@ -10,6 +10,18 @@ mod tests {
         assert!(validate(&["language", "en"]).is_ok());
         assert!(validate(&["language", "missing"]).is_err());
     }
+
+    #[test]
+    fn vps_check_requires_one_ipv4_address_and_valid_ssh_credentials() {
+        assert!(uplink::vps::Target::parse(&["192.0.2.10", "22", "ubuntu"]).is_ok());
+        for (host, port, user) in [
+            ("192.0.2.10/24", "22", "ubuntu"),
+            ("192.0.2.10", "0", "ubuntu"),
+            ("192.0.2.10", "22", "-oProxyCommand"),
+        ] {
+            assert!(uplink::vps::Target::parse(&[host, port, user]).is_err());
+        }
+    }
 }
 
 use serde_json::{Value, json};
@@ -19,7 +31,7 @@ use std::{
 };
 use uplink::{changed, control, invite, peers, settings};
 
-const USAGE: &str = "uplinkctl update status|check|download|install | status | rooms | select URL | power on|off | language CODE | setting autostart|autoconnect|autoupdate on|off | demo-health ok|warning|critical | members | invite | nick NAME | rename-room NAME | join [--headless] URL | leave | tray green|ping|system | show | hide";
+const USAGE: &str = "uplinkctl vps create (JSON on stdin) | vps check IPV4 PORT USER [--identity FILE] [--known-hosts FILE] | update status|check|download|install | status | rooms | select URL | power on|off | language CODE | setting autostart|autoconnect|autoupdate on|off | demo-health ok|warning|critical | members | invite | nick NAME | rename-room NAME | join [--headless] URL | leave | tray green|ping|system | show | hide";
 
 fn validate(args: &[&str]) -> io::Result<()> {
     match args {
@@ -85,6 +97,16 @@ fn change_window(show: bool) -> io::Result<()> {
 }
 
 fn execute(args: &[&str]) -> io::Result<Value> {
+    if args == ["vps", "create"] {
+        use std::io::Read;
+        let config = serde_json::from_reader(io::stdin().lock().take(32768))?;
+        let invitation = uplink::vps::create(config, &settings::path()?, false, |_| {})?;
+        return Ok(json!({"ok":true,"invitation":invitation}));
+    }
+    if let ["vps", "check", target @ ..] = args {
+        let checks = uplink::vps::Target::parse(target)?.check()?;
+        return Ok(json!({"ok":true,"source":"ssh","data":checks}));
+    }
     validate(args)?;
     let path = settings::path()?;
     match args {

@@ -1,0 +1,127 @@
+import { DialogFrame, Label, Action } from "controls.slint";
+import { Tab } from "network.slint";
+import { TextField } from "text-field.slint";
+
+export global VpsUi {
+    in-out property <int> step;
+    in-out property <string> failure;
+    in-out property <string> invitation;
+    pure callback check(string, string) -> string;
+    callback known-fingerprint(string,string)->string;
+    callback choose-key(string) -> string;
+    callback install(string,string,string,string,string,string,string);
+}
+component Field inherits VerticalLayout {
+    in property <string> title;
+    in property <string> hint;
+    in property <bool> secret;
+    in property <bool> eye;
+    callback toggle-eye();
+    in property <string> error;
+    in-out property <string> value <=> input.text;
+    callback accept();
+    in property <int> focus-cycle;
+    changed focus-cycle => {if root.focus-cycle>0 {input.focus();}}
+    spacing: 3px;
+    Label {text:root.title; font-weight:600;}
+    input := TextField {field-name:root.title;hint:root.hint;secret:root.secret;trailing:root.eye?26px:0px;submit(s)=>{root.accept();}
+        if root.eye:Action {x:parent.width - 29px;y:2px;width:26px;height:28px;title-button:true;icon-only:true;glyph:root.secret?@image-url("../assets/icon/eye.svg"):@image-url("../assets/icon/eye-off.svg");
+            accessible-label:root.secret?@tr("Show password"):@tr("Hide password");invoked=>{root.toggle-eye();}}
+    }
+    if root.error!="": Label {text:root.error;color:#e99087;font-size:12px;wrap:word-wrap;}
+}
+export component VpsDialog inherits DialogFrame {
+    callback closed();
+    callback copy-link(string)->bool;
+    in-out property <string> page:"name";
+    property <bool> checking;
+    property <bool> is-key;
+    property <string> name;
+    property <string> ip;
+    property <string> port:"22";
+    property <string> user;
+    property <string> password;
+    property <string> identity;
+    property <string> fingerprint;
+    property <bool> reveal;
+    property <bool> help;
+    property <string> field-issue;
+    property <int> attempt;
+    private property <bool> busy:page=="progress" && VpsUi.failure=="" && VpsUi.invitation=="";
+    dismiss => {if !root.busy {root.closed();}}
+    function go(p:string) {root.checking=false; root.page=p; root.field-issue="";}
+    function next() {
+        root.checking=true;root.attempt+=1;
+        if root.page=="name" {
+            if VpsUi.check("name",root.name)=="" {root.go("access");} else {root.field-issue="name";}
+        } else if root.page=="access" {
+            if VpsUi.check("ip",root.ip)!="" {root.field-issue="ip";}
+            else if VpsUi.check("port",root.port)!="" {root.field-issue="port";}
+            else if VpsUi.check("user",root.user)!="" {root.field-issue="user";}
+            else if root.is-key && root.identity=="" {root.checking=true;}
+            else if !root.is-key && root.password=="" {root.field-issue="password";}
+            else {root.fingerprint=VpsUi.known-fingerprint(root.ip,root.port);root.go(root.fingerprint==""?"trust":"confirm");}
+        } else if root.page=="trust" {
+            if VpsUi.check("fingerprint",root.fingerprint)=="" {root.go("confirm");}
+            else {root.field-issue="fingerprint";}
+        } else if root.page=="confirm" || (root.page=="progress" && VpsUi.failure!="") {
+            VpsUi.failure=""; VpsUi.invitation=""; VpsUi.step=1;
+            root.go("progress");
+            VpsUi.install(root.name,root.ip,root.port,root.user,root.is-key?"":root.password,root.is-key?root.identity:"",root.fingerprint);
+        }
+    }
+    HorizontalLayout {height:28px;spacing:6px;
+        if root.page!="name" && root.page!="progress": Action {width:26px; icon-only:true;glyph:@image-url("../assets/icon/back.svg"); accessible-label:@tr("Back");invoked=>{
+            root.go(root.page=="trust"?"access":root.page=="confirm"?"trust":"name");}}
+        Label {text:root.page=="access"?@tr("VPS access"):root.page=="trust"?@tr("Verify your VPS"):VpsUi.invitation!=""?@tr("Network created"):@tr("Create network");font-size:19px;font-weight:600;}
+        if !root.busy: Action {width:28px;caption:"×";title-button:true;accessible-label:@tr("Close");invoked=>{root.dismiss();}}
+    }
+    if root.page=="name": Field {focus-cycle:root.field-issue=="name"?root.attempt:0;title:@tr("Network name");value<=>root.name;error:root.checking?VpsUi.check("name",root.name):"";accept=>{root.next();}}
+    if root.page=="name": Label {text:@tr("Use the server address and login from your hosting provider.");wrap:word-wrap;color:#a7abb2;}
+    if root.page=="access":HorizontalLayout {spacing:8px;
+        Field {focus-cycle:root.field-issue=="ip"?root.attempt:0;title:@tr("Server IP address");hint:"192.0.2.10";value<=>root.ip;error:root.checking?VpsUi.check("ip",root.ip):"";accept=>{root.next();}}
+        Field {focus-cycle:root.field-issue=="port"?root.attempt:0;width:78px;title:@tr("SSH port");value<=>root.port;error:root.checking?VpsUi.check("port",root.port):"";accept=>{root.next();}}
+    }
+    if root.page=="access":Field {focus-cycle:root.field-issue=="user"?root.attempt:0;title:@tr("Login");hint:"root";value<=>root.user;error:root.checking?VpsUi.check("user",root.user):"";accept=>{root.next();}}
+    if root.page=="access":HorizontalLayout {height:28px;
+        Tab {title:@tr("Password");selected:!root.is-key;choose=>{root.is-key=false;}}
+        Tab {title:@tr("SSH key");selected:root.is-key;choose=>{root.is-key=true;}}
+    }
+    if root.page=="access" && !root.is-key:HorizontalLayout {spacing:4px;
+        Field {focus-cycle:root.field-issue=="password"?root.attempt:0;title:@tr("VPS password");eye:true;secret:!root.reveal;toggle-eye=>{root.reveal=!root.reveal;}value<=>root.password;
+            error:root.checking && root.password==""?@tr("Enter the VPS password."):"";accept=>{root.next();}}
+
+    }
+    if root.page=="access" && root.is-key:Action {height:32px;filled:true;
+        caption:root.identity==""?@tr("Choose SSH key"):root.identity;invoked=>{root.identity=VpsUi.choose-key(root.identity);}}
+    if root.page=="access" && root.is-key && root.checking && root.identity=="":Label {text:@tr("Choose your private key file.");color:#e99087;}
+    if root.page=="access": Action {height:24px;caption:@tr("Only have an IP and login?");invoked=>{root.help=!root.help;}}
+    if root.page=="access" && root.help:Label {text:@tr("Open the access section in your VPS dashboard to set a password or choose a key.");wrap:word-wrap;color:#a7abb2;}
+    if root.page=="trust":Field {focus-cycle:root.field-issue=="fingerprint"?root.attempt:0;title:@tr("VPS SSH fingerprint");hint:"SHA256:…";value<=>root.fingerprint;
+        error:root.checking?VpsUi.check("fingerprint",root.fingerprint):"";accept=>{root.next();}}
+    if root.page=="trust":Label {text:@tr("Copy the Ed25519 fingerprint from the VPS dashboard or ask your hosting provider for it.");wrap:word-wrap;color:#a7abb2;}
+    if root.page=="confirm":VerticalLayout {spacing:8px;
+        Label {text:root.name;font-size:16px;font-weight:600;}
+        Label {text:root.ip;color:#a7abb2;}
+        Label {text:@tr("Uplink will install the server, create the network and connect you as its owner.");wrap:word-wrap;}
+    }
+    if root.page!="progress":Action {width:root.card-width - 34px;height:32px;primary:true;caption:root.page=="confirm"?@tr("Install and create network"):@tr("Continue");invoked=>{root.next();}}
+    if root.page=="progress" && VpsUi.invitation=="":VerticalLayout {spacing:7px;
+        for label[i] in [@tr("Verify SSH access"),@tr("Set up the server and network"),@tr("Connect this PC"),@tr("Assign owner and get invitation")]:VerticalLayout {
+            Label {text:(i+1<VpsUi.step?"✓   ":i+1==VpsUi.step && VpsUi.failure!=""?"×   ":"·   ")+label;
+                color:i+1==VpsUi.step && VpsUi.failure!=""?#e99087:i+1<=VpsUi.step?#eff0f2:#90949b;}
+            if i+1==VpsUi.step && VpsUi.failure!="":Label {text:VpsUi.failure;color:#e99087;wrap:word-wrap;font-size:12px;}
+        }
+    }
+    if root.page=="progress" && VpsUi.failure!="":HorizontalLayout {height:32px;spacing:8px;
+        Action {caption:@tr("Back");invoked=>{VpsUi.failure="";root.go("access");}}
+        Action {caption:@tr("Retry");primary:true;invoked=>{root.next();}}
+    }
+    if root.page=="progress" && VpsUi.invitation!="":VerticalLayout {spacing:8px;
+        Label {text:root.name;font-weight:600;}
+        Label {text:@tr("Send this invitation to a friend.");}
+        TextField {text:VpsUi.invitation;readonly:true;field-name:@tr("Invitation");}
+        Action {width:root.card-width - 34px;height:32px;primary:true;caption:copied.running?"✓":@tr("Copy invitation");invoked=>{if root.copy-link(VpsUi.invitation){copied.start();}}}
+        copied := Timer {interval:2s;running:false;triggered=>{self.stop();}}
+    }
+}

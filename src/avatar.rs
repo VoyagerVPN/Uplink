@@ -54,10 +54,13 @@ pub fn qr(url: &str) -> Image {
 }
 
 pub fn pick() -> Option<PathBuf> {
+    pick_file("PNG, JPEG, WebP\0*.png;*.jpg;*.jpeg;*.webp\0\0")
+}
+pub fn pick_file(pattern: &str) -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::UI::{Controls::Dialogs::*, Input::KeyboardAndMouse::GetActiveWindow};
     let mut buf = vec![0u16; 32768];
-    let filter: Vec<u16> = "PNG, JPEG, WebP\0*.png;*.jpg;*.jpeg;*.webp\0\0"
+    let filter: Vec<u16> = pattern
         .encode_utf16()
         .collect();
     let mut ofn: OPENFILENAMEW = unsafe { std::mem::zeroed() };

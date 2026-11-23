@@ -894,3 +894,51 @@ mod nickname_tests {
         assert_eq!(nickname(&file, "Windows User").unwrap(), "Мир");
     }
 }
+
+pub(crate) fn creation_id(path: &Path, scope: &str) -> io::Result<String> {
+    let mut result = String::new();
+    update(path, |prefs| {
+        result = prefs["creating"][scope]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+        prefs["creating"][scope] = result.clone().into();
+        Ok(())
+    })?;
+    Ok(result)
+}
+
+pub(crate) fn finish_creation(
+    path: &Path,
+    scope: &str,
+    own: &crate::transport::Membership,
+) -> io::Result<()> {
+    update(path, |prefs| {
+        if let Some(live) = prefs["live"].get_mut(own.key()) {
+            if live["session"] == own.session
+                && let Some(rows) = live["rows"].as_array_mut()
+            {
+                if let Some(row) = rows.iter_mut().find(|r| r["node"] == own.node) {
+                    row["role"] = "owner".into();
+                }
+            }
+        }
+        if prefs["creating"][scope] == own.id {
+            prefs["creating"].as_object_mut().unwrap().remove(scope);
+        }
+        Ok(())
+    })
+}
+
+pub fn vps_fingerprint(path: &Path, endpoint: &str) -> io::Result<String> {
+    Ok(read(path)?["vps_hosts"][endpoint]
+        .as_str()
+        .unwrap_or_default()
+        .into())
+}
+pub(crate) fn remember_vps(path: &Path, endpoint: &str, fingerprint: &str) -> io::Result<()> {
+    update(path, |prefs| {
+        prefs["vps_hosts"][endpoint] = fingerprint.into();
+        Ok(())
+    })
+}

@@ -8,21 +8,24 @@ export component JoinDialog inherits DialogFrame {
     private property <string> host: NetworkUi.server;
     private property <string> network-name;
     private property <string> password;
+    private property <bool> failed: NetworkUi.join-failure != "";
+    private property <bool> show-steps: NetworkUi.joining || root.failed;
+    callback create-network();
     callback submit(string);
     callback close-form();
     dismiss => { if !NetworkUi.joining { root.close-form(); } }
 
     HorizontalLayout {
         height: 28px;
-        Label { text: NetworkUi.joining ? @tr("Joining network") : @tr("Join network"); font-size: 19px; font-weight: 600; }
+        Label { text: root.failed ? @tr("Could not join network") : NetworkUi.joining ? @tr("Joining network") : @tr("Join network"); font-size: 19px; font-weight: 600; }
         if !NetworkUi.joining: Action { width: 28px; caption: "×"; title-button: true; accessible-label: @tr("Close"); invoked => { root.dismiss(); } }
     }
-    if !NetworkUi.joining: HorizontalLayout {
+    if !root.show-steps: HorizontalLayout {
         height: 28px; spacing: 2px;
         Tab { title: @tr("Link"); selected: !NetworkUi.credentials; choose => { if NetworkUi.credentials { root.error = ""; NetworkUi.credentials = false; } } }
         Tab { title: @tr("Name and password"); selected: NetworkUi.credentials; choose => { if !NetworkUi.credentials { root.error = ""; NetworkUi.credentials = true; } } }
     }
-    if !NetworkUi.joining && !NetworkUi.credentials: HorizontalLayout {
+    if !root.show-steps && !NetworkUi.credentials: HorizontalLayout {
         height: 32px; spacing: 6px;
         TextField {
             text <=> root.link; hint: @tr("Paste an invitation link"); field-name: @tr("Invitation link");
@@ -34,7 +37,7 @@ export component JoinDialog inherits DialogFrame {
             available: root.link != ""; glyph: @image-url("../assets/icon/join.svg"); glyph-size: 20px;
             invoked => { root.submit(root.link); } }
     }
-    if !NetworkUi.joining && NetworkUi.credentials: VerticalLayout {
+    if !root.show-steps && NetworkUi.credentials: VerticalLayout {
         spacing: 8px;
         VerticalLayout { spacing: 4px;
             Label { text: @tr("Server"); font-size: 12px; color: #a7abb2; }
@@ -57,15 +60,30 @@ export component JoinDialog inherits DialogFrame {
                 invoked => { NetworkUi.login(root.host, root.network-name, root.password); } }
         }
     }
-    if !NetworkUi.joining && root.error != "": Label { text: root.error; wrap: word-wrap; color: #e99087; }
-    if NetworkUi.joining: VerticalLayout {
+    if !root.show-steps: Action {height:28px; caption:@tr("Create a network on my VPS");invoked=>{root.create-network();}}
+    if !root.show-steps && root.error != "": Label { text: root.error; wrap: word-wrap; color: #e99087; }
+    if root.show-steps: VerticalLayout {
         spacing: 5px;
-        for title[index] in [@tr("Check network access"), @tr("Prepare ZeroTier on this PC"), @tr("Confirm membership"), @tr("Get a virtual IP address")]: HorizontalLayout {
-            height: 25px; spacing: 8px;
-            Label { width: 18px; horizontal-alignment: center; text: index + 1 < NetworkUi.join-step ? "✓" : "" + (index + 1);
-                color: index + 1 <= NetworkUi.join-step ? #bfec70 : #a7abb2; }
-            Label { text: title; font-weight: index + 1 == NetworkUi.join-step ? 600 : 400;
-                color: index + 1 == NetworkUi.join-step ? #eff0f2 : #a7abb2; }
+        for title[index] in [@tr("Check network access"), @tr("Prepare ZeroTier on this PC"), @tr("Confirm membership"), @tr("Get a virtual IP address")]: row := VerticalLayout {
+            private property <bool> current: index + 1 == NetworkUi.join-step;
+            private property <bool> failed: root.failed && self.current;
+            HorizontalLayout {
+                height: 25px; spacing: 8px;
+                Label { width: 18px; horizontal-alignment: center; text: row.failed ? "×" : index + 1 < NetworkUi.join-step ? "✓" : "" + (index + 1);
+                    font-weight: row.failed ? 700 : 400;
+                    color: row.failed ? #e99087 : index + 1 <= NetworkUi.join-step ? #bfec70 : #a7abb2; }
+                Label { text: title; font-weight: row.current ? 600 : 400; color: row.current ? #eff0f2 : #a7abb2; }
+            }
+            if row.failed: HorizontalLayout { padding-left: 26px;
+                Label { text: NetworkUi.join-failure; wrap: word-wrap; font-size: 12px; color: #e99087; }
+            }
         }
+    }
+    if root.failed: HorizontalLayout { height: 32px; spacing: 8px; alignment: end;
+        Action { caption: @tr("Back"); invoked => { NetworkUi.join-failure = ""; } }
+        Action { caption: @tr("Retry"); primary: true; invoked => {
+            if NetworkUi.credentials { NetworkUi.login(root.host, root.network-name, root.password); }
+            else { root.submit(root.link); }
+        } }
     }
 }

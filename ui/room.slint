@@ -3,6 +3,8 @@ export { TrayMenu, TrayChoice } from "tray-menu.slint";
 import { UpdateUi, UpdateHeader, UpdateDialog } from "update.slint";
 export { UpdateUi, UpdatePhase, ReleaseNote } from "update.slint";
 import { NetworkUi, NetworkPage } from "network.slint";
+import { VpsDialog, VpsUi } from "vps-dialog.slint";
+export { VpsUi } from "vps-dialog.slint";
 import { JoinDialog } from "join-dialog.slint";
 import { NetworkDialog } from "network-dialog.slint";
 export { NetworkUi, Person } from "network.slint";
@@ -191,11 +193,14 @@ export component RoomWindow inherits Window {
     callback rename(string);
     callback rename-room(string);
     callback join-room(string);
+    callback join-dialog-closed();
     callback leave-room();
     in property <[SavedRoom]> rooms;
     in-out property <bool> adding-network;
     in-out property <string> pending-link;
+    in-out property <bool> creating-network;
     function open-join() {
+        NetworkUi.join-failure = "";
         root.error = "";
         root.pending-link = "";
         NetworkUi.credentials = false;
@@ -228,7 +233,7 @@ export component RoomWindow inherits Window {
     property <color> status-color: !power-on ? #91969f : health == "critical" ? #f07474 : health == "warning" ? #f2a94e : #bfec70;
     FocusScope { focus-on-tab-navigation: false; }
     if root.language-open: TouchArea { clicked => { root.language-open = false; } }
-    FocusScope {enabled:NetworkUi.modal=="" && !UpdateUi.dialog-open && !root.adding-network && !NetworkUi.joining;focus-on-tab-navigation:false;
+    FocusScope {enabled:NetworkUi.modal=="" && !UpdateUi.dialog-open && !root.adding-network && !root.creating-network && !NetworkUi.joining;focus-on-tab-navigation:false;
     VerticalLayout {
         padding-left: 20px; padding-right: 20px; padding-top: 12px; padding-bottom: 14px; spacing: 8px;
         HorizontalLayout {
@@ -501,8 +506,13 @@ export component RoomWindow inherits Window {
     if root.adding-network || NetworkUi.joining: JoinDialog {
         error <=> root.error;
         link <=> root.pending-link;
+        create-network => { root.adding-network=false; VpsUi.failure=""; VpsUi.invitation=""; VpsUi.step=0; root.creating-network=true; }
         submit(value) => { root.join-room(value); }
-        close-form => { root.adding-network = false; root.pending-link = ""; root.error = ""; }
+        close-form => { NetworkUi.join-failure = ""; root.adding-network = false; root.pending-link = ""; root.error = ""; root.join-dialog-closed(); }
+    }
+    if root.creating-network: VpsDialog {
+        copy-link(value) => { return root.copy(value); }
+        closed => {root.creating-network=false; VpsUi.failure=""; VpsUi.invitation=""; root.join-dialog-closed();}
     }
     if NetworkUi.modal!="": NetworkDialog {}
     if UpdateUi.dialog-open: UpdateDialog {}
