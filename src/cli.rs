@@ -100,8 +100,8 @@ fn execute(args: &[&str]) -> io::Result<Value> {
     if args == ["vps", "create"] {
         use std::io::Read;
         let config = serde_json::from_reader(io::stdin().lock().take(32768))?;
-        let invitation = uplink::vps::create(config, &settings::path()?, false, |_| {})?;
-        return Ok(json!({"ok":true,"invitation":invitation}));
+        let network = uplink::vps::create(config, &settings::path()?, false, |_| {})?;
+        return Ok(json!({"ok":true,"invitation":network.invitation}));
     }
     if let ["vps", "check", target @ ..] = args {
         let checks = uplink::vps::Target::parse(target)?.check()?;
@@ -201,7 +201,7 @@ fn execute(args: &[&str]) -> io::Result<Value> {
     let connected = active.is_some_and(connected_room);
     let result = match args {
         ["rooms"] => {
-            json!({"rooms":rooms.iter().enumerate().map(|(i,r)| json!({"name":r.name,"url":r.url,"selected":i==0,"source":if r.live.is_some(){"zerotier"}else{"local_fixture"},"connected":connected_room(r),"ip":connected_room(r).then_some(&r.own_ip)})).collect::<Vec<_>>()})
+            json!({"rooms":rooms.iter().enumerate().map(|(i,r)| json!({"name":r.name,"url":r.url,"selected":i==0,"source":if r.live.is_some(){"easytier"}else{"local_fixture"},"connected":connected_room(r),"ip":connected_room(r).then_some(&r.own_ip)})).collect::<Vec<_>>()})
         }
         ["members"] => {
             let creator = active.map(|r| r.creator_ip.as_str()).unwrap_or_default();
@@ -235,7 +235,7 @@ fn execute(args: &[&str]) -> io::Result<Value> {
         }
     };
     Ok(
-        json!({"ok":true,"source":if active.is_some_and(|r|r.live.is_some()) {"zerotier"} else {"local_fixture"},"data":result}),
+        json!({"ok":true,"source":if active.is_some_and(|r|r.live.is_some()) {"easytier"} else {"local_fixture"},"data":result}),
     )
 }
 

@@ -9,9 +9,7 @@ import zlib
 
 
 def main():
-    files = {"provision.py", "prepare_root.py", "instance.py", "groups.py", "invites.py",
-             "device_proof.py", "client_api.py", "uplink-zt.service", "uplink-client-api.service",
-             "uplink-instance.service", "uplink-instance.socket"}
+    files = {'uplink-owner.service', 'engine_config.py', 'uplink-owner.socket', 'uplink-engine.service', 'membership.py', 'provision.py', 'instance.py', 'easytier.py', 'rpc_guard.py', 'client_api.py', 'uplink-rpc-guard.service', 'uplink-api.service', 'engine.py'}
     if os.geteuid() != 0:
         raise ValueError("Administrator access is required on the VPS.")
     print(json.dumps({"stage":"authenticated"}), flush=True)

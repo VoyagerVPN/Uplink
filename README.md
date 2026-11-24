@@ -6,9 +6,9 @@ Uplink connects Windows PCs to a self-hosted virtual LAN. The desktop client use
 
 ## Join a self-hosted instance
 
-Run **Uplink-Setup.exe** and choose **Install**. Use the folder icon to change the installation directory. Upgrades reuse the existing path. Open Uplink and paste an invitation from the instance owner. On the first connection, Windows may ask you to approve ZeroTier setup under the same account. To host an instance, see the [server guide](server/README.md). In 0.2.0, choose **Join network → Create a network on my VPS**. The wizard accepts a password or SSH key and asks for the server’s Ed25519 fingerprint on first use. A fresh installation supports Ubuntu 24.04 or Debian 12 (x86-64), public IPv4, TCP 80/443 and UDP 9993.
+Install the Windows package with an administrator account, then open Uplink as your regular user and paste the invitation. To host a network, choose **Join network → Create a network on my VPS**. Use a Debian 12 or Ubuntu 24.04 x86-64 VPS with public IPv4, SSH access, TCP 80/443 and UDP 9993. Uplink remembers the SSH key on first contact and stops if it changes. If the VPS uses a provider HTTPS proxy, select that option on the confirmation screen and enter the proxy hostname, private VPS address and public UDP port. [Server guide](server/README.md)
 
-The controller assigns virtual addresses. Uplink updates nicknames and the member list over HTTPS. Your row shows API response time. Other rows show ICMP latency to each member's virtual address. Turning Uplink off disconnects its networks from ZeroTier. Turning it back on restores saved connections.
+The VPS assigns a private IPv4 address and a personal EasyTier credential to each member. Uplink exchanges nicknames and membership changes over HTTPS. The Windows service connects independent instances through one Uplink adapter. Each network keeps its own IPv4 address. Joining or leaving one network preserves the other connections. The power button stops or restores the saved connections. Membership lasts until you leave the network or are removed. After a long absence, Uplink uses your saved session to renew the device credential and reconnect with the same IP address.
 
 ## Try the interface with demo networks
 
@@ -62,23 +62,23 @@ To add a translation, copy the [Russian catalog](lang/ru/LC_MESSAGES/uplink.po) 
 .\uplinkctl.exe show
 ```
 
-For an unattended join, run `uplinkctl join --headless URL`. It saves the membership without opening the window. Live invitations require an already configured ZeroTier installation and Uplink device certificate. If setup is needed, the command exits before contacting the server or starting an elevation prompt.
+For an unattended join, run `uplinkctl join --headless URL` after installing the Windows package. The CLI and desktop app use the same service and enrollment flow.
 
-`window` can be `open`, `minimized`, `tray` or `stopped`. The selected network's `source` is `zerotier` or `local_fixture`. An unknown ping is `null`. Tray modes are `green`, `ping` and `system`. You can read state and edit the profile while the window is closed. Profile changes notify the open GUI. The `show` and `join` commands open the window.
+`window` can be `open`, `minimized`, `tray` or `stopped`. The selected network's `source` is `easytier` or `local_fixture`. An unknown ping is `null`. Tray modes are `green`, `ping` and `system`. You can read state and edit the profile while the window is closed. Profile changes notify the open GUI. The `show` and `join` commands open the window.
 
-## Build and install for the current user
+## Build and install on Windows
 
 Use Windows x64 with Visual Studio Build Tools, MSVC and the Windows SDK. Run PowerShell from the project root.
 
 ```powershell
 .\dev.ps1 test
-.\dev.ps1 perf
-.\install-user.ps1 -SourceDirectory .cache/target/perf
+.\installer\build.ps1
+.\.cache\packages\Uplink-Setup.exe
 ```
 
-Build the graphical installer with `.\installer\build.ps1`. The output is `.cache/packages/Uplink-Setup.exe`. The script downloads NSIS 3.13 into the project cache and verifies the archive's SHA-256. For a silent install, run `Uplink-Setup.exe /S`. Uninstall from Windows Settings. The uninstaller keeps your profile and saved networks by default. Select the profile checkbox to remove them. A separate ZeroTier checkbox is selected by default when Uplink recorded installing the service. Silent uninstall supports `/PURGEDATA` and `/REMOVEZEROTIER`.
+Build the graphical installer with `.\installer\build.ps1`. The output is `.cache/packages/Uplink-Setup.exe`. The script downloads NSIS 3.13 into the project cache and verifies the archive's SHA-256. For a silent install, run `Uplink-Setup.exe /S`. Uninstall from Windows Settings. The uninstaller keeps your profile and saved networks by default. Select the profile checkbox to remove them.
 
-`install-user.ps1` installs the three binaries in a versioned directory under `%LOCALAPPDATA%\Programs\Uplink` and registers `uplink://` for the current user. It prints the build path. For development, run `.\dev.ps1 run`. Settings are stored in `%APPDATA%\Uplink\prefs.json`. Set `UPLINK_PREFS_DIR` for both CLI and GUI processes to use an isolated profile.
+Setup installs the shared Windows network service and registers invitation links. For development, run `.\dev.ps1 run`. Settings are stored in `%APPDATA%\Uplink\prefs.json`. Set `UPLINK_PREFS_DIR` for both CLI and GUI processes to use an isolated profile.
 
 The Inter license is included in [assets/fonts/Inter-LICENSE.txt](assets/fonts/Inter-LICENSE.txt). For public distribution, select a Slint license and meet its attribution requirements. [Slint terms](https://slint.dev/terms-and-conditions)
 

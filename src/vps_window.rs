@@ -5,12 +5,6 @@ use uplink::{i18n, settings, vps};
 
 pub fn bind(ui: &RoomWindow, path: &Path) {
     let api = ui.global::<VpsUi>();
-    let prefs = path.to_owned();
-    api.on_known_fingerprint(move |ip, port| {
-        settings::vps_fingerprint(&prefs, &format!("{ip}:{port}"))
-            .unwrap_or_default()
-            .into()
-    });
     let weak = ui.as_weak();
     api.on_check(move |field, value| {
         let Some(ui) = weak.upgrade() else {
@@ -27,17 +21,20 @@ pub fn bind(ui: &RoomWindow, path: &Path) {
     let weak = ui.as_weak();
     let path = path.to_owned();
     api.on_install(
-        move |name, ip, port, user, password, identity, fingerprint| {
+        move |name, ip, port, user, password, identity, host, bind, udp_port| {
             let weak = weak.clone();
             let path = path.clone();
             let config = vps::Creation {
                 name: name.into(),
                 ip: ip.into(),
-                port: port.parse().unwrap_or(0),
+                port: port.trim().parse().unwrap_or(0),
                 user: user.into(),
                 password: password.into(),
                 identity: identity.into(),
-                fingerprint: fingerprint.trim().into(),
+                trust_on_first_use: true,
+                public_host: host.into(),
+                proxy_bind: bind.into(),
+                udp_port: udp_port.trim().parse().ok(),
                 ..Default::default()
             };
             std::thread::spawn(move || {
@@ -49,11 +46,12 @@ pub fn bind(ui: &RoomWindow, path: &Path) {
                 let _ = weak.upgrade_in_event_loop(move |ui| {
                     let api = ui.global::<VpsUi>();
                     match result {
-                        Ok(url) => {
+                        Ok(network) => {
                             if let Ok(rooms) = rooms {
                                 apply_room_change(&ui, rooms);
                             }
-                            api.set_invitation(url.into());
+                            api.set_network_key(network.key.into());
+                            api.set_invitation(network.invitation.into());
                         }
                         Err(error) => {
                             let source = error.to_string();

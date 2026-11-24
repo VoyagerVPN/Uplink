@@ -227,6 +227,19 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
     ui.set_rooms(ModelRc::new(VecModel::from(rows)));
 }
 
+fn apply_synced_rooms(ui: &RoomWindow, nick: String, rooms: Vec<settings::Room>) {
+    let keep_editing = ui.get_editing()
+        && ui.get_nickname().as_str() == nick
+        && rooms
+            .first()
+            .is_some_and(|r| r.live.is_some() && r.url == ui.get_invite_url().as_str());
+    if !keep_editing {
+        ui.set_editing(false);
+        ui.set_nickname(nick.into());
+    }
+    apply_rooms(ui, rooms);
+}
+
 fn open_pending_invite(ui: &RoomWindow, path: &Path) {
     let net = ui.global::<NetworkUi>();
     if ui.get_creating_network() || net.get_joining() || (ui.get_adding_network() && !net.get_join_failure().is_empty()) {
@@ -521,18 +534,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         open_pending_invite(&ui, &inbox);
                         apply_language(&ui, &language);
                         apply_options(&ui, options, autostart);
-                        if ui.get_editing()
-                            && ui.get_nickname().as_str() == nick
-                            && rooms.first().is_some_and(|r| {
-                                r.live.is_some() && r.url == ui.get_invite_url().as_str()
-                            })
-                        {
-                            refresh_members(&ui, &rooms[0]);
-                            return;
-                        }
-                        ui.set_editing(false);
-                        ui.set_nickname(nick.into());
-                        apply_rooms(&ui, rooms);
+                        apply_synced_rooms(&ui, nick, rooms);
                     }
                     Err(e) => show_error(&ui, e),
                 })
@@ -565,6 +567,54 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_member_sees_a_new_rail_avatar_while_editing_their_nickname() {
+        use slint::Model;
+        use slint::platform::{
+            Platform, WindowAdapter,
+            software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
+        };
+        struct Screen;
+        impl Platform for Screen {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+                Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
+            }
+        }
+        slint::platform::set_platform(Box::new(Screen)).unwrap();
+        let ui = RoomWindow::new().unwrap();
+        let prefs = tempfile::tempdir().unwrap();
+        let file = prefs.path().join("prefs.json");
+        let url = "uplink://qa.example/networks/ab";
+        let live = serde_json::json!({"host":"qa.example","id":"ab","node":"alice","name":"Network","session":"fixture","rows":[]});
+        std::fs::write(
+            &file,
+            serde_json::json!({"rooms":[url,invite::PINE],"live":{url: live}}).to_string(),
+        )
+        .unwrap();
+        let mut rooms = settings::rooms(&file).unwrap();
+        let other = rooms
+            .iter_mut()
+            .find(|room| room.url == invite::PINE)
+            .unwrap();
+        let pixels = image::RgbaImage::from_pixel(1, 1, image::Rgba([90, 180, 32, 255]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        pixels
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        use base64::Engine;
+        other.policy.avatar = base64::engine::general_purpose::STANDARD.encode(bytes.into_inner());
+        ui.set_nickname("Alice".into());
+        ui.set_invite_url(url.into());
+        ui.set_editing(true);
+        apply_synced_rooms(&ui, "Alice".into(), rooms);
+        assert!(ui.get_editing());
+        assert!(
+            ui.get_rooms()
+                .iter()
+                .any(|r| r.url.as_str() == invite::PINE && r.has_avatar)
+        );
+    }
 
     #[test]
     fn table_sorts_names_and_numeric_latency_in_both_directions() {

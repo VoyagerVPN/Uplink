@@ -457,7 +457,7 @@ fn credentials_submit_server_name_and_secret_from_the_native_form() {
     click(&ui, 5., 5.);
     assert!(ui.get_adding_network());
     net.set_join_step(2);
-    net.set_join_failure("Windows denied access to the ZeroTier root file (planet).".into());
+    net.set_join_failure("Invalid Uplink network profile".into());
     net.set_joining(false);
     platform::update_timers_and_animations();
     let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
@@ -494,25 +494,35 @@ fn version_opens_release_notes_without_starting_download() {
 
 #[test]
 fn vps_wizard_validates_fields_and_submits_the_confirmed_request() {
+    create_from_wizard(false);
+}
+
+#[test]
+fn vps_wizard_forwards_provider_proxy_settings() {
+    create_from_wizard(true);
+}
+
+fn create_from_wizard(proxy: bool) {
     let (ui, surface) = open();
     let wizard = ui.global::<VpsUi>();
     wizard.on_check(|field, value| uplink::vps::field_error(&field, &value).into());
     let calls = Rc::new(RefCell::new(Vec::new()));
     let seen = calls.clone();
-    wizard.on_install(move |name,ip,port,user,password,key,fp| {
-        seen.borrow_mut().push([name,ip,port,user,password,key,fp].map(|s|s.to_string()));
+    wizard.on_install(move |name,ip,port,user,password,key,host,bind,udp| {
+        seen.borrow_mut().push([name,ip,port,user,password,key,host,bind,udp].map(|s|s.to_string()));
     });
-    let primary = || {
+    let primary_y = || {
         platform::update_timers_and_animations();
         let mut pixels = vec![slint::Rgb8Pixel::default();388*540];
         surface.request_redraw();
         surface.draw_if_needed(|r| { r.render(&mut pixels,388); });
         let rows: Vec<_> = pixels.chunks(388).enumerate().filter(|(_,row)| {
-            row.iter().filter(|p|p.g>185 && p.r>130 && p.b<150).count()>125
+            row.iter().filter(|p|p.g>185 && p.r>130 && p.b<150).count()>55
         }).map(|(y,_)|y).collect();
         assert!(!rows.is_empty());
-        click(&ui,194.,rows[rows.len()/2] as f32);
+        rows[rows.len()/2] as f32
     };
+    let primary = || click(&ui, 194., primary_y());
     ui.set_creating_network(true);
     primary();
     key(&ui,"Co-op");
@@ -524,14 +534,66 @@ fn vps_wizard_validates_fields_and_submits_the_confirmed_request() {
     key(&ui,Key::Return);
     key(&ui,"fixture");
     key(&ui,Key::Return);
-    primary();
-    let fingerprint="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    key(&ui,fingerprint);
-    key(&ui,Key::Return);
-    primary();
-    assert_eq!(calls.borrow().len(),1);
-    assert_eq!(calls.borrow()[0], ["Co-op","192.0.2.10","22","root","fixture","",fingerprint]);
+    if proxy {
+        click(&ui, 194., primary_y() - 40.);
+        primary();
+        key(&ui, "proxy.example.org");
+        key(&ui, Key::Return);
+        key(&ui, "192.168.88.6");
+        key(&ui, Key::Return);
+    } else {
+        primary();
+    }
+    let endpoint = if proxy { ["proxy.example.org", "192.168.88.6", "9993"] } else { ["", "", ""] };
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0][..6], ["Co-op","192.0.2.10","22","root","fixture",""]);
+    assert_eq!(calls[0][6..], endpoint);
     wizard.set_step(2);
+    if !proxy {
+        let marker = || {
+            platform::update_timers_and_animations();
+            let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+            surface.request_redraw();
+            surface.draw_if_needed(|r| { r.render(&mut pixels, 388); });
+            pixels.chunks(388).flat_map(|row| row[37..55].iter().copied()).collect::<Vec<_>>()
+        };
+        let first = marker();
+        std::thread::sleep(std::time::Duration::from_millis(220));
+        assert!(first != marker(), "The active installation step should animate");
+        let net = ui.global::<NetworkUi>();
+        net.set_manages(true);
+        net.set_avatar_editable(true);
+        ui.set_invite_url("uplink://coop.example/networks/fixture".into());
+        wizard.set_network_key(ui.get_invite_url());
+        wizard.set_invitation("uplink://coop.example/invite/fixture".into());
+        let weak = ui.as_weak();
+        net.on_action(move |action, _| {
+            let ui = weak.unwrap();
+            let net = ui.global::<NetworkUi>();
+            match action.as_str() {
+                "pick" => net.set_modal("crop".into()),
+                "save-avatar" => { net.set_has_avatar(true); net.invoke_close_modal(); }
+                _ => panic!("Unexpected avatar action"),
+            }
+        });
+        let avatar_y = primary_y() - 130.;
+        click(&ui, 67., avatar_y);
+        assert_eq!(net.get_modal(), "crop", "Owner can edit the avatar on the result screen");
+        key(&ui, Key::Escape);
+        assert!(net.get_modal().is_empty());
+        assert!(ui.get_creating_network());
+        click(&ui, 67., avatar_y);
+        click(&ui, 291., primary_y());
+        assert!(net.get_has_avatar());
+        assert!(net.get_modal().is_empty());
+        let copied = Rc::new(RefCell::new(String::new()));
+        let value = copied.clone();
+        ui.on_copy(move |link| { *value.borrow_mut() = link.to_string(); true });
+        primary();
+        assert_eq!(*copied.borrow(), "uplink://coop.example/invite/fixture");
+        return;
+    }
     wizard.set_failure("Fixture failure".into());
     click(&ui,4.,4.);
     assert!(!ui.get_creating_network());

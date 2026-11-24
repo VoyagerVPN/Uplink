@@ -8,9 +8,15 @@ fn problem(ui: &RoomWindow, e: io::Error) {
         .set_error(uplink::i18n::error_message(&ui.get_language_code(), &e.to_string()).into());
 }
 
+fn avatar_editor_available(ui: &RoomWindow) -> bool {
+    let net = ui.global::<NetworkUi>();
+    net.get_manages() && net.get_avatar_editable()
+        && (ui.get_created_network_selected() || !ui.get_creating_network() && net.get_panel() == "general")
+}
+
 fn load_file(ui: &RoomWindow, draft: &Editor, path: PathBuf) {
     let net = ui.global::<NetworkUi>();
-    if !net.get_manages() || !net.get_avatar_editable() || net.get_panel() != "general" {
+    if !avatar_editor_available(ui) {
         return;
     }
     match avatar::Draft::open(&path) {
@@ -223,10 +229,7 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
     window.window().on_winit_window_event(move |win, event| {
         if let Some(ui) = weak.upgrade() {
             let net = ui.global::<NetworkUi>();
-            if net.get_manages()
-                && net.get_avatar_editable()
-                && net.get_panel() == "general"
-                && net.get_modal().is_empty()
+            if avatar_editor_available(&ui) && net.get_modal().is_empty()
             {
                 match event {
                     WindowEvent::HoveredFile(_) => net.set_dragging_file(true),

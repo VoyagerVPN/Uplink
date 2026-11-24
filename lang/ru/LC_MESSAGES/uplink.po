@@ -444,14 +444,6 @@ msgctxt "native"
 msgid "Too many login attempts"
 msgstr "Слишком много попыток входа. Повторите через минуту."
 
-msgctxt "native"
-msgid "Run the Uplink transport installer to verify this device"
-msgstr "Запустите установщик транспорта Uplink для подтверждения устройства"
-
-msgctxt "native"
-msgid "Prepare the Uplink transport before joining headlessly"
-msgstr "Для подключения без окна сначала настройте транспорт Uplink"
-
 msgid "Uplink Setup"
 msgstr "Установка Uplink"
 
@@ -513,39 +505,12 @@ msgstr "Открыть Uplink"
 msgid "Uninstall"
 msgstr "Удалить"
 
-msgid "Transport is ready"
-msgstr "Транспорт настроен"
-
-msgid "Network transport"
-msgstr "Сетевой транспорт"
-
-msgid "Connect ZeroTier to your Uplink server."
-msgstr "Подключите ZeroTier к своему серверу Uplink."
-
-msgid "Open the invitation in Uplink to join."
-msgstr "Откройте приглашение в Uplink, чтобы войти в сеть."
-
-msgid "Set up transport"
-msgstr "Настроить транспорт"
-
 msgid "Connect"
 msgstr "Подключить"
 
 msgctxt "native"
-msgid "Administrator approval is required for network setup."
-msgstr "Для настройки транспорта подтвердите запрос Windows."
-
-msgctxt "native"
-msgid "Use the same Windows account for administrator approval."
-msgstr "Подтвердите запрос под той же учётной записью Windows."
-
-msgctxt "native"
 msgid "Paste an invitation from your Uplink server."
 msgstr "Вставьте ссылку-приглашение своего сервера Uplink."
-
-msgctxt "native"
-msgid "Check the invitation, server and installed ZeroTier root."
-msgstr "Проверьте ссылку, доступность сервера и корень ZeroTier."
 
 msgid "Choose installation folder"
 msgstr "Выбрать папку установки"
@@ -587,9 +552,6 @@ msgstr "Ваши сети и настройки сохранены."
 msgid "Delete local data and saved networks"
 msgstr "Удалить настройки и сохранённые сети"
 
-msgid "Uninstall ZeroTier"
-msgstr "Удалить ZeroTier"
-
 msgid "Could not finish"
 msgstr "Не удалось завершить операцию"
 
@@ -598,20 +560,8 @@ msgid "Uplink files are in use."
 msgstr "Файлы Uplink заняты другим процессом."
 
 msgctxt "native"
-msgid "Could not clean up Uplink data or ZeroTier."
-msgstr "Не удалось удалить данные Uplink или ZeroTier."
-
-msgctxt "native"
 msgid "Check access to the installation folder."
 msgstr "Проверьте доступ к папке установки."
-
-msgctxt "native"
-msgid "Network setup was not completed."
-msgstr "Настройка сети не завершена."
-
-msgctxt "native"
-msgid "Restart Windows to finish removing ZeroTier."
-msgstr "Перезагрузите Windows для завершения удаления ZeroTier."
 
 msgid "What’s new in {}"
 msgstr "Что нового в {}"
@@ -714,10 +664,6 @@ msgid "Uplink API unavailable"
 msgstr "Сервис Uplink на сервере недоступен."
 
 msgctxt "native"
-msgid "Invalid ZeroTier identifier"
-msgstr "Получен некорректный идентификатор ZeroTier."
-
-msgctxt "native"
 msgid "Missing local profile"
 msgstr "Не найден локальный профиль пользователя."
 
@@ -726,28 +672,12 @@ msgid "Missing Windows path"
 msgstr "Не удалось определить системный путь Windows."
 
 msgctxt "native"
-msgid "Invalid ZeroTier root"
-msgstr "Не удалось проверить конфигурацию корневого узла ZeroTier."
-
-msgctxt "native"
-msgid "This network requires a different ZeroTier root configuration"
-msgstr "Этой сети нужна другая конфигурация корневых узлов ZeroTier."
-
-msgctxt "native"
-msgid "Invalid ZeroTier network list"
-msgstr "Не удалось прочитать список сетей ZeroTier."
-
-msgctxt "native"
 msgid "Waiting for virtual IP"
 msgstr "Адаптер ещё не получил виртуальный IP-адрес."
 
 msgctxt "native"
 msgid "Windows unavailable"
 msgstr "Не удалось получить доступ к компонентам Windows."
-
-msgctxt "native"
-msgid "Could not change Uplink adapter power"
-msgstr "Не удалось переключить сетевой адаптер Uplink."
 
 msgctxt "native"
 msgid "Unexpected network"
@@ -760,18 +690,6 @@ msgstr "Не удалось прочитать сохранённую сеть."
 msgctxt "native"
 msgid "Uplink is disabled"
 msgstr "Uplink выключен."
-
-msgctxt "native"
-msgid "ZeroTier identity has changed"
-msgstr "На этом компьютере изменился идентификатор устройства ZeroTier."
-
-msgctxt "native"
-msgid "Network already managed outside Uplink"
-msgstr "На этом компьютере сеть уже подключена вне Uplink."
-
-msgctxt "native"
-msgid "Local ZeroTier service unavailable"
-msgstr "Локальная служба ZeroTier недоступна."
 
 msgctxt "native"
 msgid "ProgramData unavailable"
@@ -814,53 +732,17 @@ msgstr "Подключение к сети"
 msgid "Could not join network"
 msgstr "Не удалось подключиться"
 
-msgctxt "native"
-msgid "Windows denied read access to the ZeroTier root file (planet)."
-msgstr "Windows запретила чтение файла конфигурации ZeroTier (planet)."
-
 msgid "Check network access"
 msgstr "Проверка доступа к сети"
 
-msgid "Prepare ZeroTier on this PC"
-msgstr "Подготовка ZeroTier на компьютере"
+msgid "Start the Uplink network service"
+msgstr "Запуск сетевой службы Uplink"
 
 msgid "Confirm membership"
 msgstr "Подтверждение участия в сети"
 
 msgid "Get a virtual IP address"
 msgstr "Получение виртуального IP-адреса"
-
-msgctxt "native"
-msgid "Could not get the ZeroTier configuration from the server."
-msgstr "Не удалось получить конфигурацию ZeroTier с сервера."
-
-msgctxt "native"
-msgid "The existing ZeroTier installation could not be used safely."
-msgstr "Проверьте конфигурацию и права доступа уже установленного ZeroTier."
-
-msgctxt "native"
-msgid "Could not download the ZeroTier installer."
-msgstr "Не удалось скачать установщик ZeroTier. Проверьте подключение к интернету."
-
-msgctxt "native"
-msgid "Could not verify or install the ZeroTier package."
-msgstr "Не удалось проверить подпись или установить пакет ZeroTier."
-
-msgctxt "native"
-msgid "The local ZeroTier service could not be prepared."
-msgstr "Не удалось подготовить локальную службу ZeroTier."
-
-msgctxt "native"
-msgid "Could not prepare device verification for this Windows account."
-msgstr "Не удалось подготовить ключ устройства для этой учётной записи Windows."
-
-msgctxt "native"
-msgid "Network setup requires elevation with the same Windows account."
-msgstr "Для настройки нужны права администратора в текущей учётной записи Windows."
-
-msgctxt "native"
-msgid "Windows permission to prepare ZeroTier was cancelled."
-msgstr "Запрос прав для настройки ZeroTier отменён."
 
 msgctxt "native"
 msgid "Too many pending invitations"
@@ -873,14 +755,6 @@ msgstr "Приглашение недействительно или истек�
 msgctxt "native"
 msgid "Invitation already used"
 msgstr "Это приглашение уже использовано."
-
-msgctxt "native"
-msgid "Invalid device proof"
-msgstr "Сервер отклонил подтверждение устройства."
-
-msgctxt "native"
-msgid "Device proof required"
-msgstr "Серверу требуется подтверждение устройства."
 
 msgctxt "native"
 msgid "Membership revoked"
@@ -900,8 +774,6 @@ msgstr "Создать сеть на своём VPS"
 msgid "VPS access"
 msgstr "Доступ к VPS"
 
-msgid "Verify your VPS"
-msgstr "Подтвердите ваш VPS"
 
 msgid "Network created"
 msgstr "Сеть создана"
@@ -939,11 +811,7 @@ msgstr "Есть только IP и логин?"
 msgid "Open the access section in your VPS dashboard to set a password or choose a key."
 msgstr "Откройте раздел доступа в панели VPS. Там можно задать пароль или выбрать ключ."
 
-msgid "VPS SSH fingerprint"
-msgstr "Отпечаток SSH-ключа VPS"
 
-msgid "Copy the Ed25519 fingerprint from the VPS dashboard or ask your hosting provider for it."
-msgstr "Скопируйте отпечаток Ed25519 из панели VPS. Если его там нет, запросите у хостера."
 
 msgid "Uplink will install the server, create the network and connect you as its owner."
 msgstr "Uplink установит сервер, создаст сеть и подключит вас как владельца."
@@ -1024,10 +892,6 @@ msgid "Enter a VPS password or choose an SSH key."
 msgstr "Введите пароль от VPS или выберите SSH-ключ."
 
 msgctxt "native"
-msgid "HTTP Error 403: Forbidden"
-msgstr "Сервер загрузки отклонил запрос VPS на получение ZeroTier."
-
-msgctxt "native"
 msgid "SSH file not found"
 msgstr "Файл SSH-ключа не найден."
 
@@ -1042,3 +906,44 @@ msgstr "Сервер не отвечает"
 
 msgid "Network sync unavailable"
 msgstr "Не удалось обновить данные сети"
+
+msgid "Update the Uplink server to join this network."
+msgstr "Для подключения обновите Uplink на сервере."
+
+msgid "Invalid Uplink network profile"
+msgstr "Сервер прислал некорректный профиль сети Uplink."
+
+msgid "Could not remove Uplink data."
+msgstr "Не удалось удалить данные Uplink."
+
+msgid "Use a hosting provider’s HTTPS proxy"
+msgstr "Использовать HTTPS-прокси хостинга"
+
+msgid "HTTPS proxy hostname"
+msgstr "Домен HTTPS-прокси"
+
+msgid "Private VPS address"
+msgstr "Внутренний IP сервера"
+
+msgid "Public UDP port"
+msgstr "Порт UDP извне"
+
+msgctxt "native"
+msgid "Enter the HTTPS proxy hostname."
+msgstr "Введите домен HTTPS-прокси."
+
+msgctxt "native"
+msgid "Enter the private IPv4 address of the VPS."
+msgstr "Введите внутренний IPv4-адрес сервера."
+
+msgctxt "native"
+msgid "The saved SSH key for this VPS has changed. Installation stopped."
+msgstr "SSH-ключ этого VPS изменился. Установка остановлена. Уточните у хостера, менялся ли ключ."
+
+msgctxt "native"
+msgid "Could not open the installed Uplink client."
+msgstr "Не удалось открыть установленный клиент Uplink."
+
+msgctxt "native"
+msgid "Could not obtain the VPS SSH key. Check the address and SSH port."
+msgstr "Не удалось получить SSH-ключ сервера. Проверьте IP-адрес и порт SSH."

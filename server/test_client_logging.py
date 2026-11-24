@@ -19,7 +19,7 @@ class ClientLoggingTest(unittest.TestCase):
             if path == "/v1/login":
                 return 200, {"token": ticket}
             if path == "/v1/redeem":
-                raise ApiError(403, "Invalid device proof")
+                raise ApiError(403, "Membership revoked")
             raise ApiError(403, "private-detail")
 
         log = io.StringIO()
@@ -41,7 +41,7 @@ class ClientLoggingTest(unittest.TestCase):
         for secret in (ticket, "my-secret", "private-detail", "SECRET-METHOD", "/secret"):
             self.assertNotIn(secret, lines)
         self.assertIn("stage=login status=200 reason=ok", lines)
-        self.assertIn("stage=redeem status=403 reason=invalid_device_proof", lines)
+        self.assertIn("stage=redeem status=403 reason=membership_revoked", lines)
         self.assertIn("stage=unknown status=403", lines)
         tags = re.findall(r"ticket=([0-9a-f]{16})", lines)
         self.assertEqual(len(tags), 2)

@@ -1,0 +1,23 @@
+[Unit]
+Description=Uplink HTTPS client API backend
+Requires=uplink-engine.service
+After=uplink-engine.service network-online.target
+
+[Service]
+User=uplink-net
+Group=uplink-net
+WorkingDirectory=/opt/uplink
+EnvironmentFile=/etc/uplink-network.env
+ExecStart=/usr/bin/python3 -E -s -B /opt/uplink/client_api.py
+StateDirectory=uplink-members
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+UMask=0077
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

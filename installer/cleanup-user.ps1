@@ -1,16 +1,13 @@
 ﻿param(
     [Parameter(Mandatory)][ValidatePattern('^(Uplink|Uplink-QA-[a-z0-9]+)$')][string]$Product,
-    [Parameter(Mandatory)][string]$Helper,
-    [switch]$Purge,[switch]$RemoveZeroTier
+    [switch]$Purge
 )
 $ErrorActionPreference='Stop'
 $env:PSModulePath=Join-Path $PSHOME 'Modules'
 $local=[Environment]::GetFolderPath('LocalApplicationData')
 $roaming=[Environment]::GetFolderPath('ApplicationData')
-$base=Join-Path $local "Programs\$Product"
 $profile=Join-Path $roaming $Product
 $localData=Join-Path $local $Product
-$files='uplink.exe','uplink-window.exe','uplinkctl.exe'
 function Check-Path($path) {
     $item=Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     if ($item -and $item.Attributes -band [IO.FileAttributes]::ReparsePoint) {throw 'Unexpected redirected Uplink directory'}
@@ -28,53 +25,13 @@ function Clear-Directory($path) {
     }
     [IO.Directory]::Delete($path)
 }
-foreach ($p in (Join-Path $local 'Programs'),$base,$profile,$localData) {Check-Path $p}
-if ($Product -ceq 'Uplink') {
-    $zt=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ZeroTier\One'
-    $proof=Join-Path $zt 'uplink-proof'
-    $receipt=Join-Path $zt '.uplink-owner'
-    $config=Join-Path $profile 'prefs.json'
-    if (!$RemoveZeroTier -and (Test-Path -LiteralPath $config) -and (Test-Path -LiteralPath (Join-Path $zt 'zerotier-one_x64.exe'))) {
-        $prefs=Get-Content -LiteralPath $config -Raw -Encoding UTF8 | ConvertFrom-Json
-        $ids=@(foreach ($map in $prefs.live,$prefs.pending) {
-            if ($null -eq $map) {continue}
-            foreach ($row in $map.PSObject.Properties.Value) {if ($row.transport) {$row.transport} else {$row.id}}
-        }; if ($prefs.shared_devices) {$prefs.shared_devices.PSObject.Properties.Name})
-        foreach ($id in ($ids | Where-Object {$_ -cmatch '^[0-9a-f]{16}$'} | Select-Object -Unique)) {
-            # Уже отсоединённая сеть также считается очищенной.
-            if (Test-Path -LiteralPath (Join-Path $zt "networks.d\$id.conf")) {
-                & (Join-Path $zt 'zerotier-one_x64.exe') -q leave $id | Out-Null
-                if ($LASTEXITCODE) {throw 'Could not disconnect an Uplink network'}
-            }
-        }
+foreach ($p in $profile,$localData) {Check-Path $p}
+if ($Purge) {
+    $key="Software\$Product"
+    $settings=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key,$true)
+    if ($settings) {
+        try { $settings.DeleteSubKeyTree('Networks',$false) } finally { $settings.Dispose() }
     }
-    if ($RemoveZeroTier -or (Test-Path -LiteralPath $proof) -or (Test-Path -LiteralPath $receipt)) {
-        $mode=if ($RemoveZeroTier) {'remove'} else {'clean'}
-        $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        $run=Start-Process -FilePath $Helper -Verb RunAs -ArgumentList "$mode $sid" -Wait -PassThru -WindowStyle Hidden
-        if ($run.ExitCode -eq 29) {exit 29}
-        if ($run.ExitCode) {throw 'Transport cleanup failed'}
-    }
-}
-# Старый install-user.ps1 называл каталог по трём SHA-256. Проверяем каждый файл перед удалением.
-if (Test-Path -LiteralPath $base) {
-    foreach ($dir in Get-ChildItem -LiteralPath $base -Directory) {
-        if ($dir.Name -notmatch '^[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{8}$') {continue}
-        Check-Path $dir.FullName
-        $parts=$dir.Name.Split('-')
-        $matched=$false
-        for ($i=0;$i -lt $files.Count;$i++) {
-            $path=Join-Path $dir.FullName $files[$i]
-            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {continue}
-            Check-Path $path
-            if (!(Get-FileHash -LiteralPath $path).Hash.StartsWith($parts[$i],[StringComparison]::OrdinalIgnoreCase)) {continue}
-            $matched=$true
-            [IO.File]::Delete($path)
-        }
-        if ($matched) {[IO.File]::Delete((Join-Path $dir.FullName 'Inter-LICENSE.txt'))}
-        Remove-Empty $dir.FullName
-    }
-    Remove-Empty $base
 }
 $requests=Join-Path $localData 'requests'
 Check-Path $requests

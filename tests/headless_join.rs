@@ -26,7 +26,7 @@ fn headless_join_saves_the_network_without_starting_a_window() {
 }
 
 #[test]
-fn unprepared_headless_client_reports_setup_before_contacting_the_server() {
+fn headless_join_reports_https_failure_for_an_unreachable_server() {
     let profile = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_uplinkctl"))
         .args([
@@ -40,8 +40,7 @@ fn unprepared_headless_client_reports_setup_before_contacting_the_server() {
         .unwrap();
     assert!(!output.status.success());
     let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(
-        error["message"],
-        "Для подключения без окна сначала настройте транспорт Uplink"
-    );
+    assert!(error["message"].is_string());
+    let log = std::fs::read_to_string(profile.path().join("Uplink/last-join.log")).unwrap();
+    assert!(log.contains("operation=http_bootstrap"));
 }

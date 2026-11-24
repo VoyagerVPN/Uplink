@@ -1,5 +1,6 @@
 import { ButtonStyle } from "button-style.slint";
 export component TextField inherits Rectangle {
+    in property <bool> clearable: true;
     in property <bool> inline;
     in property <bool> secret;
     in property <bool> readonly;
@@ -25,7 +26,7 @@ export component TextField inherits Rectangle {
     border-color: editor.has-focus ? #62676d : #34373b;
     background: inline ? #191b1e : #202225;
 
-    property <bool> show-clear: !inline && !readonly && trailing == 0px && editor.has-focus && text != "";
+    property <bool> show-clear: clearable && !inline && !readonly && trailing == 0px && editor.has-focus && text != "";
     TouchArea {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { editor.focus(); }
@@ -50,6 +51,8 @@ export component TextField inherits Rectangle {
                 MenuItem { title: @tr("Select all"); enabled: editor.text != ""; activated => { editor.select-all(); } }
             }
             editor := TextInput {
+                single-line: true;
+                wrap: no-wrap;
                 input-type: root.secret ? InputType.password : InputType.text;
                 read-only: root.readonly;
                 property <length> offset;

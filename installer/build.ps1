@@ -28,15 +28,15 @@ try {
         $reader.BaseStream.Position=$reader.ReadUInt32()+4
         if ($reader.ReadUInt16() -ne 0x8664) {throw 'Uplink requires an x64 build'}
     } finally {$reader.Dispose()}
-    $helper=Join-Path $sdk 'UplinkNetwork.exe'
-    & $compiler '/INPUTCHARSET' 'UTF8' '/V2' "/DOUTPUT=$helper" (Join-Path $PSScriptRoot 'network.nsi')
-    if ($LASTEXITCODE) {throw 'Network helper build failed'}
-    $inputs=@($helper,'installer/cleanup-user.ps1',"$bin/uplink.exe","$bin/uplink-window.exe","$bin/uplinkctl.exe",'install-transport.ps1','transport/windows/Provision-DeviceProof.ps1','assets/fonts/Inter-LICENSE.txt','installer/uplink.nsi')
+    $engine=& (Join-Path $PSScriptRoot 'engine.ps1') -Cache (Join-Path $repo '.cache/easytier-271')
+    $inputs=@("$bin/uplink.exe","$bin/uplink-window.exe","$bin/uplinkctl.exe","$bin/uplink-network-service.exe",
+        "$engine/uplink-engine.exe","$engine/wintun.dll","$engine/Packet.dll","$engine/WinDivert64.sys","$engine/WinDivert.dll","$engine/WinDivert-LICENSE.txt",
+        'installer/client-location.ps1','installer/manage-service.ps1','installer/cleanup-user.ps1','installer/EasyTier-LICENSE.txt','assets/fonts/Inter-LICENSE.txt','installer/uplink.nsi')
     $hashes=($inputs | ForEach-Object {(Get-FileHash -LiteralPath $_).Hash}) -join ''
     $alg=[Security.Cryptography.SHA256]::Create()
     try {$tag=([BitConverter]::ToString($alg.ComputeHash([Text.Encoding]::ASCII.GetBytes($hashes)))).Replace('-','').Substring(0,20)} finally {$alg.Dispose()}
     $output=Join-Path $out "$product-Setup.exe"
-    & $compiler '/INPUTCHARSET' 'UTF8' '/V2' "/DNETWORK_HELPER=$helper" "/DPRODUCT=$product" "/DPROTOCOL=$protocol" "/DVERSION=$version" "/DTAG=$tag" "/DBIN=$bin" "/DOUTPUT=$output" (Join-Path $PSScriptRoot 'uplink.nsi')
+    & $compiler '/INPUTCHARSET' 'UTF8' '/V2' "/DENGINE=$engine" "/DPRODUCT=$product" "/DPROTOCOL=$protocol" "/DVERSION=$version" "/DTAG=$tag" "/DBIN=$bin" "/DOUTPUT=$output" (Join-Path $PSScriptRoot 'uplink.nsi')
     if ($LASTEXITCODE) {throw 'NSIS build failed'}
     Write-Output $output
 } finally {Pop-Location}

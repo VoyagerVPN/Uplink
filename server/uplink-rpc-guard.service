@@ -1,0 +1,10 @@
+[Unit]
+Description=Restrict EasyTier management to Uplink services
+After=nftables.service
+Before=uplink-engine.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I -B /opt/uplink/rpc_guard.py
+RemainAfterExit=yes
+

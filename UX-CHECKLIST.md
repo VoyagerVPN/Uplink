@@ -2,6 +2,18 @@
 
 Checked items record verified behavior. The early UX checks used the Windows client with a local network model. Later sections record tests with the live transport.
 
+## Current transport verification
+
+- [x] The Windows package bundles the Uplink service, EasyTier 2.7.1 and Wintun. A restricted Windows client joined by invitation, received a virtual IPv4 address, exchanged UDP with a Linux member, and left. One HTTPS connection and one UDP flow carried 23 TCP and 25 UDP packets on the local test network.
+- [x] Instance 129 runs the new engine, owner socket, HTTPS API and local RPC guard. Windows and Linux joined from separate invitations through the public endpoint, exchanged a UDP nonce, and left. Captured during admission and teardown: 134 TCP and 125 UDP packets in both directions. Peak across deployment and testing: 43 combined packets in a rolling second.
+- [x] Verify two independent network authorities on one Windows adapter locally. Adding and leaving network B kept A reachable in 95/95 UDP probes, with the same adapter GUID and engine PID throughout.
+- [x] A restricted Windows client redeemed invitations from two independent local HTTPS instances. The packaged service added a second virtual IPv4 to the same adapter. Minecraft Java 26.3 showed both test LAN announcements together on its Multiplayer screen. Leaving the second network preserved the first address. The A-side UDP probe received 97/97 replies with Multiplayer open before joining, and 94/94 when launching the game with both networks already connected.
+- [ ] Repeat simultaneous membership across two independently hosted public VPS instances.
+- [ ] Verify discovery and direct connectivity from two physical Windows PCs behind separate routers.
+- [x] Verify lifetime membership. A restricted Windows client reconnected to a local Linux peer after its 17-second test credential expired and exchanged UDP on its original IP. Server tests cover 183 days offline, a lost renewal reply, role retention and refusal after removal or leave.
+
+Earlier dated measurements and release notes below refer to the transport shipped with those releases.
+
 ## Release plan
 
 - **0.1.0** is the published Windows installer for joining existing instances.
@@ -18,7 +30,8 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 - [x] The network gear opens Overview, Invitations and Members. Each test network stores its own changes.
 - [x] Choose an avatar with the Windows file picker or drop an image. The editor shows a rounded preview and supports panning, zooming and replacing the source. It saves a 512 × 512 square.
 - [x] Share a network avatar with verified members. Owners and admins can replace it. A regular sync transfers the image only when the local copy is missing or outdated. Older instances show a server update hint before photo selection.
-- [ ] Verify the avatar change in two installed Windows clients against an upgraded VPS.
+- [x] Verify an avatar upload and replacement in two running native Windows client windows, with independent owner and member profiles and the local HTTPS membership server. Both rendered the same 512 × 512 image on their next UI refresh. An open nickname editor also keeps receiving rail updates.
+- [ ] Repeat the avatar check against the deployed VPS from two installed PCs.
 - [x] The invite dialog shows enabled methods. QR codes and links can be enabled independently. Password sign-in also asks for the server address and network name.
 - [x] Owners and admins manage the name, avatar and invitations. Owners change roles and transfer ownership. Admins can remove regular members. Removal and transfer require confirmation.
 
@@ -66,7 +79,8 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 - [x] The tray remembers its mode: brand green, ping indicator or Windows theme. The tooltip reads “Uplink”.
 - [x] The Uplink tray menu previews the three icon modes and marks the current one. Icon and power changes update it in place while Explorer's hidden-icons panel remains open. The menu remains visible when the main Uplink window receives focus. Escape, clicking outside Uplink or clicking the tray icon again dismisses it. Opening the main window and quitting are separate actions.
 - [x] A neutral icon represents an unavailable measurement. All three modes were applied to the Explorer tray icon.
-- [ ] Manually check contrast on a light taskbar and the colors for good, moderate and high measured latency with the live transport. On a dark taskbar, the green and Windows-theme icons were legible in the Explorer overflow. Demo ping mode displayed green bars for the 38 ms sample.
+- [x] Draw the packaged green, latency, offline and system tray icons on light and dark backgrounds using Windows DrawIconEx at 16, 20, 24 and 32 px. Light-background active strokes measured at least 4.46:1. The menu previews follow the same palettes.
+- [ ] Manually check the light Explorer taskbar with real latency samples. On a dark taskbar, the green and Windows-theme icons were legible in the Explorer overflow. Demo ping mode displayed green bars for the 38 ms sample.
 - [x] Components and layouts can be edited directly. The library choice was evaluated with a real window displaying Cyrillic and a memory measurement.
 - [x] Compare the window and total working sets with the Win32 client while viewing a network and after closing the window.
 
@@ -79,9 +93,9 @@ Checked items record verified behavior. The early UX checks used the Windows cli
 - [x] Saved memberships are independent of power. When off, the area below the profile centers a muted outline of an unplugged cable and the label “Uplink is off”. Only the cable and label brighten on hover. Clicking restores the full list and the last selected network.
 - [x] My Networks is accessible from the main screen. Each entry shows the name and server. One click opens the members. Switching preserves the order. Join opens and focuses the invite field. Two local networks use distinct IPs, member lists and links. Reopening an invitation selects the existing network. Leave removes only the selected membership.
 - [x] The settings gear uses a square icon area. Switches use the Uplink accent and the same 6 px radius as buttons. Hovering over the track or thumb highlights it and shows a hand cursor.
-- [ ] Check saved networks on different Uplink instances, including instances with different private roots.
+- [ ] Check saved networks on different Uplink instances, with independent membership authorities.
 
-Multiple Uplink networks can be active simultaneously. Selecting a network in the rail opens its members while keeping connections active. On one instance, groups share a ZeroTier transport with membership isolation. Peers without a shared network must receive neither direct packets nor LAN announcements from one another.
+Multiple Uplink networks can be active simultaneously. Selecting a network in the rail opens its members while keeping connections active. Each network uses its own EasyTier membership authority. Peers without a shared network must receive neither direct packets nor LAN announcements from one another.
 
 - [x] Three Linux clients running ZeroTier 1.16.2 shared one transport, with one peer in groups A and B. Direct UDP and LAN announcements passed in both directions on one interface only between peers in a shared group. Removing and restoring group B membership preserved the common peer's interface. Clients used the private planet from instance 129 and a separate local controller.
 - [x] The API and Windows client distinguish logical networks from the shared transport. Two logical networks were deployed on instance 129. Server checks cover invite joins, member lists, management and revocation of an individual membership. The installed Windows client supports both network formats.
@@ -89,6 +103,12 @@ Multiple Uplink networks can be active simultaneously. Selecting a network in th
 - [ ] Verify the installed window and CLI against instance 129: check both lists, a stable GUID and uninterrupted UDP in A when leaving and rejoining B. At 01:23 Moscow time on November 22, public HTTPS and SSH on 129 did not respond and Windows did not receive the shared transport configuration.
 
 ## Adapter lifecycle
+
+- [x] Use `Uplink` as the Windows adapter name and `Uplink Tunnel` as its description in the Wintun prototype. Windows supplies the Network Connections icon.
+- [x] Verify delegated start/stop on a temporary Windows service with a restricted, medium-integrity client. Before delegation Windows denied access. After delegation three start/stop cycles opened a real Wintun session and removed the temporary adapter on stop. The host had UAC disabled.
+- [x] Verify the installed Windows CLI against a secure Linux peer using a per-member EasyTier credential. A restricted process completed three on/off cycles, received a UDP reply after each start, and saw the adapter removed after each stop. The administrator staged the profile before the test.
+- [x] Join by invitation with a restricted Windows CLI process through the installed service and verify peer UDP traffic. The desktop and CLI use the same enrollment implementation.
+- [ ] Register the new transport service as `UplinkNetwork` with display name and executable description `Uplink Network Service`. Keep this service ID across updates. Check installation, reboot and repeated toggles with UAC enabled.
 
 - [ ] Implement one persistent virtual Uplink adapter per Windows installation. On clean Windows, verify that power cycles, network changes and restarts preserve the name and GUID without creating additional devices.
 Earlier results with one adapter per network:
@@ -107,8 +127,10 @@ Earlier results with one adapter per network:
 - [x] Carry the prototype's field validation into the Rust/Slint setup screens. On submission, show red text directly below each invalid field and focus the first one. Clear the message when corrected. Use the same behavior for Enter and the submit button.
 - [x] Exercise the owner and friend journeys in an offline GUI prototype, including first-use host verification, a second network on the same VPS and joining by invitation. SSH access and installation are simulated in this check.
 - [x] Start with a generic public IPv4 VPS over SSH. The Windows CLI checks basic Linux prerequisites using a trusted SSH host key. Checked a successful authenticated probe and rejection of both unknown and changed keys on a loopback SSH fixture.
+- [x] The Windows creation wizard goes from VPS access directly to confirmation. It remembers the first SSH host key per IP and port and blocks a changed key before authentication. Behind a hosting provider's HTTPS proxy, the owner can supply the proxy hostname, private address and forwarded UDP port on the confirmation screen. Verified the native form and both SSH paths on loopback.
 - [x] Initialize or verify the controller runtime from the signed root. On an isolated Linux controller a repeat preserved the identity, private planet, network and an existing invitation across a restart.
 - [x] Connect the native wizard and headless CLI to SSH deployment, first-owner enrollment and a separate friend invitation. The SSH key is pinned before authentication. Retry keeps the pending group ID. The installer supports a generic public IPv4 or an existing reverse proxy.
+- [x] Animate the active VPS setup step. Show the created network name and editable avatar next to its invitation. Closing or saving the crop returns to the same invitation.
 - [x] Reinstall on service 129 behind the existing proxy. Check invitation bootstrap over public HTTPS and a nonce from external UDP 30000 to internal UDP 9993. Separate Linux peers on an isolated bridge confirmed owner/member roles and UDP echo after interrupting and resuming network creation.
 - [ ] Run the full installed Windows owner and friend journey on a dedicated public IPv4, including issuance and renewal from a publicly trusted CA. Provider panel integration is deferred.
 
@@ -125,6 +147,9 @@ Uplink is for private networks among friends. The project aims to publish the Wi
 - [x] Test an established connection between two Linux clients. TCP, UDP and UDP broadcast passed both ways over the virtual interfaces. All 30 messages arrived in the final run via instance 129. Results immediately after joining and after restarting were also recorded.
 - [ ] Measure broadcast readiness immediately after joining. On the first run in a new network, all five packets were lost in one direction. On retry, all five arrived in each direction. Over three Linux rejoins, the first broadcasts in both directions arrived 0.45–3.31 s after the timestamp taken before join. The upper bound and reason for the initial loss remain open.
 - [ ] Repeat joining, bidirectional TCP and UDP, UDP broadcast and latency measurement with two clean Windows Uplink clients on different physical networks. Record whether the route is direct or relayed.
+- [ ] Verify automatic LAN world discovery in an unmodified Minecraft Java client on Windows. Open a world to LAN in each of two independent Uplink networks and a third on the physical LAN. All three must appear in Multiplayer and be joinable without typing an address, switching networks or manually changing Windows routes. Prefer a shared discovery mechanism that works for other games. Verify both hosting and joining on real PCs.
+- [x] In the local receive-side experiment, the Minecraft Java 26.2 detector and an independent listener on a random IPv4 multicast group and UDP port each found two overlay announcements and a host-local announcement on Ethernet. The delivery path followed Windows multicast memberships without game-specific addresses, ports, payload parsing or routes. Turning it off hid both overlay announcements. The home source used multicast loopback. Entry into real game worlds and discovery from another physical LAN host are still open.
+- [x] Repeat receive-side discovery over the internet with service 129. The stock Minecraft Java 26.2 detector found the remote fixture over EasyTier 2.7.1 on the public UDP mapping. A Java Edition status request to the discovered endpoint returned the matching description and ping nonce. A separate random UDP group and port also worked. The remote fixture simulated the game server. Full gameplay, hosting from a Windows PC, peer-to-peer NAT traversal and simultaneous physical-LAN discovery remain open.
 
 - [x] Connect the invitation service, real virtual IPs, presence and nickname updates. Verified HTTPS invitations, pasting a link, Windows uplink:// registration, approval of a pending node, controller-assigned address, presence and propagation of a Windows nickname to a second API client.
 - [x] Check owner permissions on the server and propagate renames. Owners and admins could rename a network and an ordinary member was denied. A second node saw the new name. The previous owner was denied after transferring ownership.
@@ -183,7 +208,7 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [x] Verify a ZeroTier signature on first join and when recovering an old session's privileges. Stock Windows and Linux idtool binaries were tested with temporary keys.
 - [x] Retry interrupted joins and revoke partially granted access after a password change. Limit login rate and concurrent password checks. SQLite contention returns HTTP 503 to the client.
 - [x] Complete an independent review, fix findings and rerun checks. At that checkpoint, 36 Rust tests passed, as did 18 server tests each on Windows and Linux. Failure and retry paths were checked with PowerShell 5.1 and 7. Windows build `87F21127-80FB3060-6542B3EC` was installed and all three executable hashes were verified with SHA-256.
-- [ ] Update instance 129, repeat password sign-in on two installed Windows clients, verify migration of the previous owner and exchange packets.
+- [ ] Repeat password sign-in and peer traffic with two installed Windows clients on the new transport.
 - [x] Install ZeroTier 1.16.2 on a second Windows PC without a previous ZeroTier service. The MSI ran in SSH session 0 with its headless feature and no reboot. Device proof provisioning resumed after correcting the script encoding for Windows PowerShell 5.1.
 - [x] Join the existing Uplink 129 network by invitation from the second Windows PC. Both ZeroTier nodes reported a direct LAN path and exchanged a UDP request and its matching response over their virtual addresses with the remote GUI stopped.
 - [ ] Characterize the first-join UDP burst before testing across different physical networks. During one join the two endpoint counters saw 454 packets to and from the provider address, including 320 UDP packets and one new TCP connection. The estimated combined rolling peak was 173 packets/s. A WAN-side measurement is still needed.
@@ -192,8 +217,6 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [x] Send the first invitation redemption immediately and back off after pending enrollment (400 ms, 800 ms, up to 1.6 s within the 25 s retry budget). Rust tests cover the retry schedule and denied invitations. An isolated ZeroTier comparison recorded 12 versus 5 redemption requests and a working peer echo in both runs.
 - [ ] Compare the updated Windows client with the previous capture on instance 129 using the same headless peer. Record elapsed join time, API requests, external TCP SYNs, backend connections and peak combined TCP/UDP packets per second.
 - [x] Release the SQLite writer while waiting for a device to register and checking its signature. Repeat ticket validation before binding. Local parallel enrollment tests confirmed two independent admissions and a single winner for a shared invitation, including an isolated real ZeroTier controller.
-- [ ] If final controller writes are slow in practice, coordinate authorization with revocation and shared transport tag updates before moving those writes outside the SQLite transaction.
-- [ ] Verify an uninterrupted first-time MSI installation and device proof provisioning on another clean Windows system.
 
 
 ## Joining a network
@@ -218,5 +241,5 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [x] The NSIS package Uplink-Setup.exe uses a Slint window with the app's icon, font and buttons. The version appears below the title.
 - [x] The folder icon opens the system directory picker. Install, relocation, reinstall and uninstall were tested with a path containing Cyrillic and spaces.
 - [x] Verified the Start menu shortcut, invite registration, migration of start-at-sign-in settings and preservation of an unrelated file in the install directory during uninstall.
-- [x] The completion screen offers to open Uplink. The first network join starts ZeroTier setup from the client.
+- [x] The completion button launches the registered client. The installer remembers the selected client folder for later runs, including silent updates. Verified a custom path with spaces and Cyrillic, a repeat installation and cleanup. The network service runs from the protected machine package.
 - [x] Rollback uses a short label. Closing the client needs separate consent. Uninstall offers independent choices for user data and ZeroTier.

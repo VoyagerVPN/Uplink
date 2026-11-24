@@ -55,11 +55,28 @@ fn main() {
             ("4", "unknown"),
             ("5", "fair"),
             ("6", "poor"),
+            ("7", "green-light"),
+            ("8", "unknown-light"),
+            ("9", "fair-light"),
+            ("10", "poor-light"),
         ] {
             let path = format!("assets/icon/{icon}.ico");
             println!("cargo:rerun-if-changed={path}");
             resource.set_icon_with_id(&path, id);
         }
-        resource.compile().expect("Uplink icons");
+        resource.set("ProductName", "Uplink");
+        for (binary, description) in [
+            ("uplink", "Uplink"),
+            ("uplink-window", "Uplink"),
+            ("uplinkctl", "Uplink CLI"),
+            ("uplink-network-service", "Uplink Network Service"),
+        ] {
+            resource
+                .set("FileDescription", description)
+                .set("InternalName", binary)
+                .set("OriginalFilename", &format!("{binary}.exe"))
+                .compile_for(binary)
+                .expect("Uplink Windows resources");
+        }
     }
 }

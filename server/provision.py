@@ -13,15 +13,15 @@ import stat
 import tempfile
 import time
 import urllib.request
+import zipfile
 
-APP = Path("/opt/uplink-zt")
-STATE = Path("/var/lib/uplink-zt")
+APP = Path("/opt/uplink")
+STATE = Path("/var/lib/uplink-engine")
 UNITS = Path("/etc/systemd/system")
-BIN = APP / "1.16.2/usr/sbin/zerotier-one"
-SOURCES = ("instance.py", "groups.py", "invites.py", "device_proof.py", "client_api.py")
-SERVICES = ("uplink-zt.service", "uplink-instance.socket", "uplink-instance.service", "uplink-client-api.service")
-PACKAGES = {"noble": "fe78e8d3b03fe77d1607bffd67dcd6723e2bacc4ac063afb5e311400fda12ea6",
-            "bookworm": "f8927407ab99f8ac93e2ceb177f414912c24d6ca158fd65d333e7c68f0355376"}
+SOURCES = ('instance.py', 'membership.py', 'easytier.py', 'engine_config.py', 'engine.py', 'rpc_guard.py', 'client_api.py')
+SERVICES = ('uplink-engine.service', 'uplink-rpc-guard.service', 'uplink-owner.socket', 'uplink-owner.service', 'uplink-api.service')
+ARCHIVE_SHA256 = "8dc4f8576c7a4978c1f000630014b75ec88d172f6cb10935e72092ddd5ec7a9a"
+ENGINE_FILES = {'easytier-cli': ('easytier-linux-x86_64/easytier-cli', '3e251c060ba574cf124b9a36caf2663a63e4ea30ba746e96aee080905a2d9c5b'), 'easytier-core': ('easytier-linux-x86_64/easytier-core', '442d846bae32b644b42e69edbc15080c31ca0c5ae078e8e593d61b5ecf38114f')}
 
 
 def managed_file(path, data, mode):
@@ -47,12 +47,6 @@ def run(*args, timeout=420):
                    stdout=subprocess.DEVNULL, env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
 
 
-BINARY_HASHES = {
-    "noble": "324ddced4cae02b59ba8fbb854899214b1b2d8b6bbed13eff897678a7d6ecd90",
-    "bookworm": "f1d57895144065ce963292f658f9eac4375c42013ccdf083e37124097b612334",
-}
-
-
 def trusted_directory(path):
     for directory in (path, *path.parents):
         info = directory.lstat()
@@ -60,31 +54,29 @@ def trusted_directory(path):
             raise ValueError("The Uplink installation directory must be owned by root")
 
 
-def ensure_binary(codename, directory):
-    BIN.parent.mkdir(parents=True, exist_ok=True)
-    trusted_directory(BIN.parent)
-    if BIN.exists():
-        info = BIN.lstat()
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
-                or hashlib.sha256(BIN.read_bytes()).hexdigest() != BINARY_HASHES[codename]):
-            raise ValueError("Unexpected ZeroTier binary")
+def ensure_binary(directory):
+    binaries = APP / "bin"
+    binaries.mkdir(exist_ok=True)
+    trusted_directory(binaries)
+    for name, (_, expected) in ENGINE_FILES.items():
+        path = binaries / name
+        if path.exists() and (path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o022
+                              or path.stat().st_uid != 0 or hashlib.sha256(path.read_bytes()).hexdigest() != expected):
+            raise ValueError("Unexpected network engine binary")
+    if all((binaries / name).exists() for name in ENGINE_FILES):
         return
-    cache = Path("/var/cache/uplink-zt") / f"zerotier-one-1.16.2-{codename}"
-    if cache.is_file():
-        trusted_directory(cache.parent)
-        binary = cache.read_bytes()
-        if hashlib.sha256(binary).hexdigest() != BINARY_HASHES[codename]:
-            raise ValueError("Cached ZeroTier binary checksum mismatch")
-        managed_file(BIN, binary, 0o755)
-        return
-    url = f"https://download.zerotier.com/debian/{codename}/pool/main/z/zerotier-one/zerotier-one_1.16.2_amd64.deb"
-    package = directory / "zerotier.deb"
-    with urllib.request.urlopen(url, timeout=40) as response, package.open("wb") as f:
-        shutil.copyfileobj(response, f)
-    if hashlib.sha256(package.read_bytes()).hexdigest() != PACKAGES[codename]:
-        raise ValueError("ZeroTier package checksum mismatch")
-    run("dpkg-deb", "-x", package, directory / "extract")
-    managed_file(BIN, (directory / "extract/usr/sbin/zerotier-one").read_bytes(), 0o755)
+    package = directory / "easytier.zip"
+    url = "https://github.com/EasyTier/EasyTier/releases/download/v2.7.1/easytier-linux-x86_64-v2.7.1.zip"
+    with urllib.request.urlopen(url, timeout=45) as source, package.open("wb") as dest:
+        shutil.copyfileobj(source, dest)
+    if hashlib.sha256(package.read_bytes()).hexdigest() != ARCHIVE_SHA256:
+        raise ValueError("Network engine archive checksum mismatch")
+    with zipfile.ZipFile(package) as archive:
+        for name, (member, expected) in ENGINE_FILES.items():
+            content = archive.read(member)
+            if hashlib.sha256(content).hexdigest() != expected:
+                raise ValueError("Network engine binary checksum mismatch")
+            managed_file(binaries/name, content, 0o755)
 
 
 def public_tls(ip):
@@ -117,7 +109,7 @@ def public_tls(ip):
     ssl_certificate /etc/letsencrypt/live/uplink-public/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/uplink-public/privkey.pem;
     client_max_body_size 2m;
-    location /v1/ {{ proxy_pass http://127.0.0.1:8930; proxy_http_version 1.1; }}
+    location /v1/ {{ proxy_pass http://127.0.0.1:8930; proxy_http_version 1.1; proxy_set_header Connection ""; }}
     location / {{ return 404; }}
 }}
 """.encode(), 0o644)
@@ -141,7 +133,6 @@ WantedBy=timers.target
 def install(ip, port, bind, external_tls):
     import fcntl
     import pwd
-    from prepare_root import prepare_instance
     ip, bind = str(ipaddress.IPv4Address(ip)), str(ipaddress.IPv4Address(bind))
     if not 1 <= port <= 65535 or os.geteuid() != 0:
         raise ValueError("Expected an external UDP port and root access")
@@ -149,7 +140,7 @@ def install(ip, port, bind, external_tls):
         raise ValueError("The proxy backend requires a private interface")
     from platform import freedesktop_os_release, machine
     distro = freedesktop_os_release().get("VERSION_CODENAME")
-    if distro not in PACKAGES or machine() != "x86_64":
+    if distro not in ("noble", "bookworm") or machine() != "x86_64":
         raise ValueError("Expected Ubuntu 24.04 or Debian 12 on x86_64")
     if Path("/proc/1/comm").read_text().strip() != "systemd":
         raise ValueError("The VPS requires systemd")
@@ -166,28 +157,22 @@ def install(ip, port, bind, external_tls):
                 with socket.socket() as probe:
                     probe.bind(("0.0.0.0", tcp))
         managed_file(marker, config, 0o600)
-        ensure_binary(distro, Path(tmp))
+        ensure_binary(Path(tmp))
+        if not Path("/usr/sbin/nft").is_file():
+            run("apt-get", "update")
+            run("apt-get", "install", "-y", "nftables")
         try:
-            pwd.getpwnam("uplink-zt")
+            pwd.getpwnam("uplink-net")
         except KeyError:
-            run("useradd", "--system", "--user-group", "--no-create-home", "--shell", "/usr/sbin/nologin", "uplink-zt")
-        prepare_instance(Path("/var/lib/uplink-zt-signing"), STATE, ip, port, BIN, "uplink-zt")
-        # Файл создаётся в каталоге контроллера с его UID только при начальной подготовке.
-        if not (STATE/"local.conf").exists():
-            account = pwd.getpwnam("uplink-zt")
-            # Создание с O_EXCL/O_NOFOLLOW исключает переход по ссылке в каталоге службы.
-            fd = os.open(STATE/"local.conf", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd,"wb") as out:
-                out.write(b'{"settings":{"portMappingEnabled":false,"allowTcpFallbackRelay":false}}')
-                os.fchown(out.fileno(),account.pw_uid,account.pw_gid)
+            run("useradd", "--system", "--user-group", "--no-create-home", "--shell", "/usr/sbin/nologin", "uplink-net")
         src = Path(__file__).resolve().parent
         for name in SOURCES:
             managed_file(APP/name, (src/name).read_bytes(), 0o644)
         for name in SERVICES:
             managed_file(UNITS/name, (src/name).read_bytes(), 0o644)
-        managed_file(Path("/etc/uplink-client-api.env"), f"UPLINK_BIND={bind}\n".encode(), 0o600)
+        managed_file(Path("/etc/uplink-network.env"), f"UPLINK_BIND={bind}\nUPLINK_UDP_ENDPOINT={ip}:{port}\nUPLINK_LISTEN_PORT=9993\n".encode(), 0o600)
         run("systemctl", "daemon-reload")
-        run("systemctl", "enable", "--now", "uplink-zt.service", "uplink-instance.socket", "uplink-client-api.service")
+        run("systemctl", "enable", "--now", "uplink-engine.service", "uplink-owner.socket", "uplink-api.service")
         if not external_tls:
             ready = APP / ".https-ready"
             if not ready.exists() or not Path("/etc/letsencrypt/live/uplink-public/fullchain.pem").is_file():
@@ -201,7 +186,7 @@ class OwnerConnection(http.client.HTTPConnection):
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(10)
-        self.sock.connect("/run/uplink-instance.sock")
+        self.sock.connect("/run/uplink-owner.sock")
 
 
 def owner(method, route, data):
@@ -215,6 +200,21 @@ def owner(method, route, data):
         return body
     finally:
         conn.close()
+
+
+def wait_for_network(group):
+    deadline = time.monotonic() + 15
+    command = [APP / "bin/easytier-cli", "-p", "127.0.0.1:941", "-n", group, "credential", "list"]
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, timeout=2)
+            if result.returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(0.5)
+    raise ValueError("Network engine unavailable")
 
 
 def serve(request):
@@ -240,6 +240,7 @@ def serve(request):
                 raise
             time.sleep(0.5)
     owner("PUT", "/v1/groups/"+group, {"name":request["name"]})
+    wait_for_network(group)
     ticket = owner("POST", "/v1/networks/"+group+"/invites", {})
     print(json.dumps({"group":group,"token":ticket["token"],"host":public_host}), flush=True)
     import sys

@@ -251,7 +251,7 @@ impl Release {
         {
             return Err(io::Error::other("Uplink Setup failed"));
         }
-        let exe = installed_client()?;
+        let exe = installed_client("Uplink")?;
         let _client = locked(&exe, &self.client_sha256)?;
         Command::new(exe)
             .arg("--after-update")
@@ -260,22 +260,27 @@ impl Release {
         Ok(())
     }
 }
-fn installed_client() -> io::Result<PathBuf> {
+pub fn installed_client(product: &str) -> io::Result<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
-    use windows_sys::{Win32::System::Registry::*, core::w};
+    use windows_sys::{Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*}, core::w};
+    if product != "Uplink" && !product.strip_prefix("Uplink-QA-").is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())) {
+        return Err(invalid());
+    }
     let mut path = vec![0u16; 32768];
-    let mut size = (path.len() * 2) as u32;
-    let status = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Uplink"),
-            w!("InstallLocation"),
-            RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
-            std::ptr::null_mut(),
-            path.as_mut_ptr().cast(),
-            &mut size,
-        )
+    let mut size = 0;
+    let mut read = |hive, key: String| {
+        let key: Vec<_> = key.encode_utf16().chain(Some(0)).collect();
+        size = (path.len() * 2) as u32;
+        unsafe {
+            RegGetValueW(hive, key.as_ptr(), w!("InstallLocation"),
+                RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY, std::ptr::null_mut(),
+                path.as_mut_ptr().cast(), &mut size)
+        }
     };
+    let mut status = read(HKEY_CURRENT_USER, format!(r"Software\{product}\Installer"));
+    if status == ERROR_FILE_NOT_FOUND {
+        status = read(HKEY_LOCAL_MACHINE, format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{product}"));
+    }
     if status != 0 {
         return Err(io::Error::from_raw_os_error(status as i32));
     }

@@ -7,7 +7,8 @@ component IconChoice inherits Rectangle {
     in property <string> caption;
     in property <bool> selected;
     in property <color> icon-color;
-    in property <color> preview-background: #212325;
+    in property <bool> light;
+    private property <color> preview-background: light ? #eceef0 : #212325;
     in property <int> bars: 3;
     callback invoked();
     height: 34px;
@@ -26,7 +27,7 @@ component IconChoice inherits Rectangle {
         for index in 3: Rectangle {
             x: 6px + index * 5px; y: 16px - self.height;
             width: 3px; height: 5px + index * 3px; border-radius: 1px;
-            background: index < root.bars ? root.icon-color : #52565c;
+            background: index < root.bars ? root.icon-color : root.light ? #858991 : #575a62;
         }
     }
     Label { x: 44px; width: parent.width - 78px; text: root.caption; color: root.selected ? #bfec70 : #eff0f2; }
@@ -82,18 +83,18 @@ export component TrayMenu inherits Window {
                 Label { width: parent.width - 20px; x: 10px; text: @tr("Tray icon"); color: #afb3b8; font-size: 11px; }
             }
             IconChoice {
-                caption: @tr("Green"); icon-color: #bfec70;
+                caption: @tr("Green"); light: root.light-taskbar; icon-color: self.light ? #416511 : #bfec70;
                 selected: root.mode == TrayChoice.green;
                 invoked => { root.choose(TrayChoice.green); }
             }
             IconChoice {
-                caption: @tr("Ping"); icon-color: #e8bf74; bars: 2;
+                caption: @tr("Ping"); light: root.light-taskbar; icon-color: self.light ? #815407 : #e9bd61; bars: 2;
                 selected: root.mode == TrayChoice.ping;
                 invoked => { root.choose(TrayChoice.ping); }
             }
             IconChoice {
                 caption: @tr("Windows theme");
-                preview-background: root.light-taskbar ? #eceef0 : #212325;
+                light: root.light-taskbar;
                 icon-color: root.light-taskbar ? #292b2e : #f2f3f4;
                 selected: root.mode == TrayChoice.system;
                 invoked => { root.choose(TrayChoice.system); }

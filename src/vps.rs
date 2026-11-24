@@ -17,7 +17,7 @@ if [ "$(cat /proc/1/comm 2>/dev/null)" = systemd ]; then echo yes; else echo no;
 if [ -c /dev/net/tun ]; then echo yes; else echo no; fi
 if command -v python3 >/dev/null 2>&1; then echo yes; else echo no; fi
 if [ "$(id -u)" = 0 ]; then echo root; elif sudo -n true >/dev/null 2>&1; then echo sudo; else echo none; fi
-if [ -d /var/lib/uplink-zt ]; then echo yes; else echo no; fi"#;
+if [ -d /var/lib/uplink-engine ]; then echo yes; else echo no; fi"#;
 
 pub struct Target {
     address: Ipv4Addr,

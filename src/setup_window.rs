@@ -41,41 +41,6 @@ fn close_client() -> io::Result<()> {
     Ok(())
 }
 
-fn zerotier_options(product: &str) -> (bool, bool) {
-    if product != "Uplink" {
-        return (false, false);
-    }
-    let Some(data) = std::env::var_os("ProgramData") else {
-        return (false, false);
-    };
-    let dir = PathBuf::from(data).join("ZeroTier/One");
-    let receipt = std::fs::read_to_string(dir.join(".uplink-owner")).ok();
-    let owned = receipt.is_some_and(|sid| {
-        let Some(root) = std::env::var_os("SystemRoot") else {
-            return false;
-        };
-        Command::new(PathBuf::from(root).join("System32/whoami.exe"))
-            .args(["/user", "/fo", "csv", "/nh"])
-            .creation_flags(0x08000000)
-            .output()
-            .is_ok_and(|out| {
-                out.status.success()
-                    && String::from_utf8_lossy(&out.stdout)
-                        .trim()
-                        .trim_end_matches('"')
-                        .rsplit('"')
-                        .next()
-                        == Some(sid.as_str())
-            })
-    });
-    (
-        dir.join("zerotier-one_x64.exe").is_file()
-            || dir.join(".uplink-removing").is_file()
-            || owned,
-        owned,
-    )
-}
-
 fn choose_folder(start: &Path) -> windows::core::Result<Option<PathBuf>> {
     use std::os::windows::ffi::OsStringExt;
     use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
@@ -137,11 +102,6 @@ pub fn run(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
         .and_then(|p| p.parent())
         .unwrap_or(&directory);
     ui.set_destination(root.display().to_string().into());
-    if removing {
-        let (present, owned) = zerotier_options(product);
-        ui.set_has_zerotier(present);
-        ui.set_remove_zerotier(owned);
-    }
     ui.set_removing(removing);
     ui.set_mode(mode.as_str().into());
     let rc = Rc::new(Cell::new(1));
@@ -186,7 +146,6 @@ pub fn run(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
         let (engine, dir) = (engine.clone(), dir.clone());
         let lang = language.clone();
         let purge = ui.get_purge();
-        let remove_zerotier = ui.get_remove_zerotier();
         let target = ui.get_destination().to_string();
         std::thread::spawn(move || {
             let status = if consent && close_client().is_err() {
@@ -197,9 +156,6 @@ pub fn run(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
                 if removing {
                     if purge {
                         child.arg("/PURGEDATA");
-                    }
-                    if remove_zerotier {
-                        child.arg("/REMOVEZEROTIER");
                     }
                     child.raw_arg(format!("_?={}", dir.display()));
                 } else {
@@ -216,8 +172,7 @@ pub fn run(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
                         Some(21) => "Another application owns the invitation links.",
                         Some(22) => "Uplink files are in use.",
                         Some(23) => "Another setup is running.",
-                        Some(29) => "Restart Windows to finish removing ZeroTier.",
-                        Some(28) => "Could not clean up Uplink data or ZeroTier.",
+                        Some(28) => "Could not remove Uplink data.",
                         _ => "Check access to the installation folder.",
                     };
                     ui.set_failure(uplink::i18n::message(&lang, detail).into());
@@ -236,14 +191,16 @@ pub fn run(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     });
     let weak = ui.as_weak();
     let result = rc.clone();
+    let product = product.to_owned();
     ui.on_launch(move || {
         if let Some(ui) = weak.upgrade() {
-            let package = Path::new(ui.get_destination().as_str())
-                .join("packages")
-                .join(directory.file_name().unwrap_or_default());
-            if Command::new(package.join("uplink.exe")).spawn().is_ok() {
-                result.set(0);
-                let _ = ui.hide();
+            match uplink::updates::installed_client(&product).and_then(|exe| Command::new(exe).spawn()) {
+                Ok(_) => {
+                    result.set(0);
+                    let _ = ui.hide();
+                }
+                Err(_) => ui.set_failure(uplink::i18n::message(&uplink::i18n::current(),
+                    "Could not open the installed Uplink client.").into()),
             }
         }
     });

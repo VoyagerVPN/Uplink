@@ -1,4 +1,4 @@
-import { Label, HintCard, Action, ButtonFocus } from "controls.slint";
+import { Label, HintCard, Action, ButtonFocus, ProgressRing } from "controls.slint";
 
 export enum UpdatePhase { idle, checking, current, found, loading, verifying, ready, restarting, updated, offline, invalid, install-failed }
 export struct ReleaseNote { text: string, heading: bool, bullet: bool }
@@ -41,17 +41,7 @@ component Ring inherits Rectangle {
     property <float> downloaded: clamp(UpdateUi.percent, 0, 100) / 100;
     animate downloaded { duration: 200ms; easing: linear; }
     property <float> fraction: UpdateUi.busy ? 0.25 : downloaded;
-    property <angle> start-angle: UpdateUi.busy ? mod(animation-tick() / 1ms, 1400) / 1400 * 360deg : 0deg;
-    property <angle> end-angle: start-angle + fraction * 360deg;
-    rim := Rectangle { width: 16.5px; height: self.width; border-radius: self.width / 2; border-width: 1.5px; border-color: root.ink;
-        opacity: root.partial && root.fraction < 1 ? 0.3 : 1; }
-    if root.partial && root.fraction > 0 && root.fraction < 1: Path {
-        width: 18px; height: 18px; viewbox-width: 18; viewbox-height: 18;
-        stroke: root.ink; stroke-width: rim.border-width;
-        MoveTo { x: 9 + 7.5 * sin(root.start-angle); y: 9 - 7.5 * cos(root.start-angle); }
-        ArcTo { radius-x: 7.5; radius-y: 7.5; sweep: true; large-arc: root.fraction > 0.5;
-            x: 9 + 7.5 * sin(root.end-angle); y: 9 - 7.5 * cos(root.end-angle); }
-    }
+    ProgressRing { ink: root.ink; spinning: UpdateUi.busy; fraction: root.partial ? root.fraction : 1; }
     if !root.partial: Path {
         width: 18px; height: 18px; viewbox-width: 24; viewbox-height: 24;
         stroke: root.ink; stroke-width: 1.5px;

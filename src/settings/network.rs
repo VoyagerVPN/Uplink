@@ -361,5 +361,5 @@ fn join_with_password(
     }
     super::join_log::operation("password_login");
     let link = crate::transport::password_invite(&host, name.trim(), password)?;
-    super::join_link(path, &link, true, progress)
+    super::join_link(path, &link, progress)
 }

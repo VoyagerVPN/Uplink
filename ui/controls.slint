@@ -176,3 +176,21 @@ export component CopyFeedback inherits Rectangle {
         }
     }
 }
+
+export component ProgressRing inherits Rectangle {
+    width: 18px; height: 18px;
+    in property <color> ink: #bfec70;
+    in property <bool> spinning: true;
+    in property <float> fraction: 0.25;
+    property <angle> start-angle: root.spinning ? mod(animation-tick() / 1ms, 1400) / 1400 * 360deg : 0deg;
+    property <angle> end-angle: start-angle + fraction * 360deg;
+    rim := Rectangle { width: 16.5px; height: self.width; border-radius: self.width / 2; border-width: 1.5px; border-color: root.ink;
+        opacity: root.fraction < 1 ? 0.3 : 1; }
+    if root.fraction > 0 && root.fraction < 1: Path {
+        width: 18px; height: 18px; viewbox-width: 18; viewbox-height: 18;
+        stroke: root.ink; stroke-width: rim.border-width;
+        MoveTo { x: 9 + 7.5 * sin(root.start-angle); y: 9 - 7.5 * cos(root.start-angle); }
+        ArcTo { radius-x: 7.5; radius-y: 7.5; sweep: true; large-arc: root.fraction > 0.5;
+            x: 9 + 7.5 * sin(root.end-angle); y: 9 - 7.5 * cos(root.end-angle); }
+    }
+}

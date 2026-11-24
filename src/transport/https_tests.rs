@@ -7,6 +7,7 @@ use std::{
     net::{Ipv4Addr, TcpListener},
     sync::Arc,
 };
+use std::{fs, path::PathBuf};
 
 thread_local! {
     static TEST_CA: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -248,4 +249,181 @@ fn a_rejected_password_change_preserves_the_last_accepted_secret() {
     assert!(network_password(&path, &url).unwrap().is_empty());
     TEST_CA.set(None);
     service.join().unwrap();
+}
+
+#[test]
+#[ignore = "requires an installed QA service and a local HTTPS EasyTier instance"]
+fn joins_local_secure_network_and_receives_udp() {
+    use std::net::UdpSocket;
+    let path = crate::settings::path().unwrap();
+    let ticket = fs::read_to_string(std::env::var_os("UPLINK_QA_TICKET").unwrap()).unwrap();
+    TEST_CA.set(Some(PathBuf::from(
+        std::env::var_os("UPLINK_QA_CA").unwrap(),
+    )));
+    crate::settings::join_headless(
+        &path,
+        &format!("uplink://127.0.0.1/invite/{}", ticket.trim()),
+    )
+    .unwrap();
+    let room = crate::settings::rooms(&path).unwrap().remove(0);
+    let live = room.live.unwrap();
+    let mut octets = live.own_ip.parse::<Ipv4Addr>().unwrap().octets();
+    octets[3] = 1;
+    let target = match std::env::var_os("UPLINK_QA_ECHO_FILE") {
+        Some(file) => fs::read_to_string(file).unwrap().trim().parse().unwrap(),
+        None => Ipv4Addr::from(octets),
+    };
+    let socket = UdpSocket::bind((live.own_ip.parse::<Ipv4Addr>().unwrap(), 0)).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(350)))
+        .unwrap();
+    socket.connect((target, 39444)).unwrap();
+    let nonce = uuid::Uuid::new_v4();
+    let mut reply = [0u8; 32];
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        socket.send(nonce.as_bytes()).unwrap();
+        if socket
+            .recv(&mut reply)
+            .is_ok_and(|n| &reply[..n] == nonce.as_bytes())
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "No UDP reply from the self-hosted peer"
+        );
+        thread::sleep(Duration::from_millis(300));
+    }
+    if std::env::var_os("UPLINK_QA_SHORT_CREDENTIAL").is_some() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let expiry = serde_json::to_value(&live).unwrap()["credential_expires_at"].as_u64()
+            .expect("save the engine expiry when joining");
+        let remaining = expiry.saturating_sub(now());
+        assert!(remaining <= 30, "fixture must issue a short first credential");
+        drop(socket);
+        crate::settings::set_option(&path, "power", false).unwrap();
+        thread::sleep(Duration::from_secs(remaining + 1));
+        crate::settings::set_option(&path, "power", true).unwrap();
+        crate::settings::refresh_transport(&path).unwrap();
+        let restored = crate::settings::rooms(&path).unwrap().remove(0).live.unwrap();
+        assert_eq!(restored.session, live.session);
+        assert_eq!(restored.node, live.node);
+        assert_eq!(restored.assigned_ip, live.assigned_ip);
+        assert!(serde_json::to_value(&restored).unwrap()["credential_expires_at"].as_u64().unwrap() > expiry);
+        let until = Instant::now() + Duration::from_secs(20);
+        loop {
+            let echoed = (|| -> io::Result<bool> {
+                let socket = UdpSocket::bind((live.own_ip.parse::<Ipv4Addr>().unwrap(), 0))?;
+                socket.set_read_timeout(Some(Duration::from_millis(350)))?;
+                socket.connect((target, 39444))?;
+                let nonce = uuid::Uuid::new_v4();
+                socket.send(nonce.as_bytes())?;
+                let n = socket.recv(&mut reply)?;
+                Ok(&reply[..n] == nonce.as_bytes())
+            })();
+            if echoed.unwrap_or(false) {break}
+            assert!(Instant::now()<until, "No UDP echo after the original credential expired");
+            thread::sleep(Duration::from_millis(250));
+        }
+    }
+    crate::settings::leave(&path, Some(&live.key())).unwrap();
+}
+
+#[test]
+#[ignore = "requires two isolated HTTPS instances and the installed QA network service"]
+fn exercise_local_invitation() {
+    use crate::settings;
+    let path = settings::path().unwrap();
+    let host = std::env::var("UPLINK_QA_HOST").unwrap();
+    assert!(matches!(host.as_str(), "127.0.0.1" | "127.0.0.2"));
+    TEST_CA.set(Some(PathBuf::from(
+        std::env::var_os("UPLINK_QA_CA").unwrap(),
+    )));
+    match std::env::var("UPLINK_QA_ACTION").unwrap().as_str() {
+        "join" => {
+            let ticket = fs::read_to_string(std::env::var_os("UPLINK_QA_TICKET").unwrap()).unwrap();
+            settings::join_headless(&path, &format!("uplink://{host}/invite/{}", ticket.trim()))
+                .unwrap();
+        }
+        "leave" => {
+            let live = settings::rooms(&path)
+                .unwrap()
+                .into_iter()
+                .filter_map(|r| r.live)
+                .find(|live| live.host == host)
+                .unwrap();
+            settings::leave(&path, Some(&live.key())).unwrap();
+        }
+        _ => panic!("Unexpected QA action"),
+    }
+}
+
+#[test]
+#[ignore = "requires local Uplink HTTPS avatar test instance"]
+fn a_second_windows_profile_receives_and_replaces_the_owners_avatar() {
+    let dir = PathBuf::from(std::env::var_os("UPLINK_AVATAR_QA").unwrap());
+    let fixture: Value =
+        serde_json::from_slice(&fs::read(dir.join("fixture.json")).unwrap()).unwrap();
+    TEST_CA.set(Some(dir.join("ca.pem")));
+    let profile = |who: &str| {
+        let live: Membership = serde_json::from_value(json!({
+            "host":fixture["host"],"id":fixture["group"],"name":"Avatar QA",
+            "node":fixture[who]["node"],"session":fixture[who]["session"],
+            "credential_expires_at":fixture[who]["expiry"]
+        }))
+        .unwrap();
+        let path = dir.join(who).join("Uplink/prefs.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            json!({"rooms":[live.key()],"power":true,"live":{(live.key()):live}}).to_string(),
+        )
+        .unwrap();
+        path
+    };
+    let owner = profile("owner");
+    let friend = profile("friend");
+    crate::settings::refresh_transport(&owner).unwrap();
+    for (turn, color) in [[90, 180, 32, 255], [42, 79, 208, 255]]
+        .into_iter()
+        .enumerate()
+    {
+        let mut pixels = color.repeat(512 * 512);
+        // Несжимаемая часть проверяет загрузку через обычный HTTPS с реальным размером фото.
+        let mut seed = 42u32;
+        for byte in &mut pixels[..512 * 256 * 4] {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            *byte = seed as u8;
+        }
+        let payload = crate::network_avatar::encode(&pixels).unwrap();
+        let network = crate::settings::rooms(&owner).unwrap().remove(0).url;
+        crate::settings::network_action(&owner, &network, "avatar", &payload).unwrap();
+        crate::settings::refresh_transport(&friend).unwrap();
+        for path in [&owner, &friend] {
+            let live = crate::settings::rooms(path)
+                .unwrap()
+                .remove(0)
+                .live
+                .unwrap();
+            let file = live.avatar_file(path).unwrap();
+            let bitmap = image::open(file).unwrap().into_rgba8();
+            assert_eq!(bitmap.dimensions(), (512, 512));
+            assert_eq!(bitmap.into_raw(), pixels);
+            let reply=post(&live.host,"sync",json!({"session":live.session,"nick":"QA","avatar_revision":live.known_avatar(path)})).unwrap();
+            assert!(reply.get("avatar").is_none());
+        }
+        let ready = dir.join(format!("ready-{turn}"));
+        fs::write(ready, b"").unwrap();
+        if std::env::var_os("UPLINK_AVATAR_VIEW").is_some() {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !dir.join(format!("viewed-{turn}")).exists() {
+                assert!(Instant::now() < deadline, "Timed out waiting for the UI");
+                thread::sleep(Duration::from_millis(150));
+            }
+        }
+    }
 }

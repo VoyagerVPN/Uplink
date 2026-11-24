@@ -28,6 +28,7 @@ pub struct Creation {
     pub password: String,
     pub identity: String,
     pub fingerprint: String,
+    pub trust_on_first_use: bool,
     pub public_host: String,
     pub proxy_bind: String,
     pub udp_port: Option<u16>,
@@ -46,8 +47,11 @@ pub fn field_error(field: &str, value: &str) -> &'static str {
             "Enter a network name (1 to 64 characters)."
         }
         "ip" if value.parse::<Ipv4Addr>().is_err() => "Enter an IPv4 address.",
-        "port" if !value.parse::<u16>().is_ok_and(|n| n > 0) => "Enter a port from 1 to 65535.",
+        "port" if !value.trim().parse::<u16>().is_ok_and(|n| n > 0) => "Enter a port from 1 to 65535.",
         "user" if Target::parse(&["127.0.0.1", "22", value]).is_err() => "Enter the SSH login.",
+        "proxy_host" if !invite::valid_host(value) => "Enter the HTTPS proxy hostname.",
+        "proxy_bind" if !value.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_private() || ip.is_loopback()) =>
+            "Enter the private IPv4 address of the VPS.",
         "fingerprint"
             if !value
                 .trim()
@@ -69,6 +73,9 @@ impl Creation {
             ("port", &self.port.to_string()),
             ("fingerprint", &self.fingerprint),
         ] {
+            if field == "fingerprint" && value.is_empty() && self.trust_on_first_use {
+                continue;
+            }
             let error = field_error(field, value);
             if !error.is_empty() {
                 return Err(invalid(error));
@@ -108,40 +115,49 @@ fn openssh(name: &str) -> io::Result<PathBuf> {
     .join(name))
 }
 
-fn pinned_keys(config: &Creation) -> io::Result<tempfile::TempDir> {
-    let scan = Command::new(openssh("ssh-keyscan.exe")?)
-        .args([
-            "-T",
-            "6",
-            "-p",
-            &config.port.to_string(),
-            "-t",
-            "ed25519",
-            &config.ip,
-        ])
-        .creation_flags(0x08000000)
-        .output()?;
+fn known_hosts_option(pin: &Path) -> io::Result<String> {
+    let pin = pin.to_string_lossy().replace('\\', "/");
+    if pin.contains(['"', '%', '$', '\n', '\r']) {
+        return Err(invalid("Invalid SSH file path"));
+    }
+    Ok(format!("UserKnownHostsFile=\"{pin}\""))
+}
+
+fn pinned_keys(config: &Creation, prefs: &Path) -> io::Result<tempfile::TempDir> {
     let directory = tempfile::tempdir()?;
-    for line in String::from_utf8_lossy(&scan.stdout).lines() {
+    let pin = directory.path().join("known_hosts");
+    // Этот обмен получает только открытый ключ. Пароль и ключ пользователя передаются
+    // отдельному SSH-процессу после проверки сохранённого отпечатка.
+    Command::new(openssh("ssh.exe")?)
+        .args(["-F", "none", "-T", "-o", "BatchMode=yes", "-o", "PreferredAuthentications=none",
+            "-o", "IdentityAgent=none", "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "GlobalKnownHostsFile=none", "-o", "UpdateHostKeys=no", "-o", "HashKnownHosts=no",
+            "-o", "HostKeyAlgorithms=ssh-ed25519", "-o", "ConnectTimeout=7", "-o", "ConnectionAttempts=1",
+            "-o", &known_hosts_option(&pin)?, "-p", &config.port.to_string(), "-l", &config.user, &config.ip, "exit"])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+        .creation_flags(0x08000000).status()?;
+    let keys = std::fs::read_to_string(&pin).map_err(|_| io::Error::other("Could not obtain the VPS SSH key. Check the address and SSH port."))?;
+    for line in keys.lines() {
         let mut fields = line.split_whitespace();
         if let (Some(_), Some("ssh-ed25519"), Some(key), None) =
             (fields.next(), fields.next(), fields.next(), fields.next())
         {
             if let Ok(raw) = STANDARD.decode(key) {
-                if format!("SHA256:{}", STANDARD_NO_PAD.encode(Sha256::digest(raw)))
-                    == config.fingerprint.trim()
-                {
-                    let host = if config.port == 22 {
-                        config.ip.clone()
-                    } else {
-                        format!("[{}]:{}", config.ip, config.port)
-                    };
-                    std::fs::write(
-                        directory.path().join("known_hosts"),
-                        format!("{host} ssh-ed25519 {key}\n"),
-                    )?;
-                    return Ok(directory);
+                let fingerprint = format!("SHA256:{}", STANDARD_NO_PAD.encode(Sha256::digest(raw)));
+                if !config.fingerprint.is_empty() && fingerprint != config.fingerprint.trim() {
+                    return Err(io::Error::other("Could not verify the VPS Ed25519 fingerprint."));
                 }
+                settings::remember_vps(prefs, &format!("{}:{}", config.ip, config.port), &fingerprint)?;
+                let host = if config.port == 22 {
+                    config.ip.clone()
+                } else {
+                    format!("[{}]:{}", config.ip, config.port)
+                };
+                std::fs::write(
+                    directory.path().join("known_hosts"),
+                    format!("{host} ssh-ed25519 {key}\n"),
+                )?;
+                return Ok(directory);
             }
         }
     }
@@ -154,16 +170,18 @@ macro_rules! bundle { ($($f:literal),+) => { json!({$($f:include_str!(concat!(".
 fn packet(config: &Creation, group: &str) -> io::Result<String> {
     let files = bundle!(
         "provision.py",
-        "prepare_root.py",
         "instance.py",
-        "groups.py",
-        "invites.py",
-        "device_proof.py",
+        "membership.py",
+        "easytier.py",
+        "engine_config.py",
+        "engine.py",
+        "rpc_guard.py",
         "client_api.py",
-        "uplink-zt.service",
-        "uplink-client-api.service",
-        "uplink-instance.service",
-        "uplink-instance.socket"
+        "uplink-engine.service",
+        "uplink-rpc-guard.service",
+        "uplink-owner.socket",
+        "uplink-owner.service",
+        "uplink-api.service"
     );
     let request = json!({"name":config.name.trim(),"ip":config.ip,"port":config.udp_port.unwrap_or(9993),
         "host":config.host(),"external_tls":!config.public_host.is_empty(),"bind":if config.proxy_bind.is_empty(){"127.0.0.1"}else{&config.proxy_bind},"group":group});
@@ -201,11 +219,7 @@ fn connection(c: &Creation, pin: &Path) -> io::Result<Child> {
         "-o",
         "ServerAliveCountMax=2",
     ]);
-    let pin = pin.to_string_lossy().replace('\\', "/");
-    if pin.contains(['"', '%', '$', '\n', '\r']) {
-        return Err(invalid("Invalid SSH file path"));
-    }
-    cmd.arg("-o").arg(format!("UserKnownHostsFile=\"{pin}\""));
+    cmd.arg("-o").arg(known_hosts_option(pin)?);
     if c.identity.is_empty() {
         cmd.args([
             "-o",
@@ -264,15 +278,20 @@ fn ticket(v: &Value, host: &str) -> io::Result<String> {
     Ok(url)
 }
 
+pub struct CreatedNetwork {
+    pub invitation: String,
+    pub key: String,
+}
+
 pub fn create(
     c: Creation,
     path: &Path,
     allow_prompt: bool,
     step: impl Fn(i32),
-) -> io::Result<String> {
+) -> io::Result<CreatedNetwork> {
     c.validate()?;
     step(1);
-    let keys = pinned_keys(&c)?;
+    let keys = pinned_keys(&c, path)?;
     let mut process = connection(&c, &keys.path().join("known_hosts"))?;
     let mut input = process.stdin.take().unwrap();
     let mut output = BufReader::new(process.stdout.take().unwrap());
@@ -286,7 +305,6 @@ pub fn create(
     if reply(&mut output)?["stage"] != "authenticated" {
         return Err(io::Error::other("Unexpected SSH response."));
     }
-    settings::remember_vps(path, &format!("{}:{}", c.ip, c.port), c.fingerprint.trim())?;
     step(2);
     let scope = format!("{}:{}|{}|{}", c.ip, c.port, c.host(), c.name.trim());
     let group = settings::creation_id(path, &scope)?;
@@ -328,5 +346,5 @@ pub fn create(
     let invitation = ticket(&reply(&mut output)?, host)?;
     settings::finish_creation(path, &scope, &own)?;
     let _ = crate::changed::notify();
-    Ok(invitation)
+    Ok(CreatedNetwork { invitation, key: own.key() })
 }

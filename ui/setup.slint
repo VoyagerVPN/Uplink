@@ -13,8 +13,6 @@ export component SetupWindow inherits Window {
     in property <bool> removing;
     in property <string> mode;
     in-out property <bool> purge;
-    in property <bool> has-zerotier;
-    in-out property <bool> remove-zerotier;
     in-out property <bool> confirm-close;
     callback choose-folder();
     in-out property <bool> busy;
@@ -48,7 +46,6 @@ export component SetupWindow inherits Window {
         }
         if root.removing && !root.done && !root.confirm-close && root.failure == "": VerticalLayout { spacing: 2px; alignment: center;
             CheckBox { text: @tr("Delete local data and saved networks"); checked <=> root.purge; enabled: !root.busy; }
-            if root.has-zerotier: CheckBox { text: @tr("Uninstall ZeroTier"); checked <=> root.remove-zerotier; enabled: !root.busy; }
         }
         if root.failure != "" || (!root.removing && !root.confirm-close): Rectangle { border-radius: 8px; background: #202225;
             HorizontalLayout { padding-left: 12px; padding-right: 8px; spacing: 6px;

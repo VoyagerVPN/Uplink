@@ -1,12 +1,8 @@
 use crate::settings::join_log;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    fs, io,
-    os::windows::process::CommandExt,
-    path::PathBuf,
-    process::{Command, Stdio},
+    io,
     thread,
     time::{Duration, Instant},
 };
@@ -68,7 +64,9 @@ pub struct Membership {
     #[serde(default)]
     pub methods: Option<InviteMethods>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport: Option<String>,
+    pub assigned_ip: Option<String>,
+    #[serde(default)]
+    pub credential_expires_at: u64,
     pub id: String,
     pub name: String,
     pub node: String,
@@ -83,38 +81,6 @@ pub struct Membership {
     pub health: String,
     #[serde(default)]
     pub availability: Availability,
-}
-
-fn home() -> io::Result<PathBuf> {
-    let data = std::env::var_os("ProgramData")
-        .ok_or_else(|| io::Error::other("ProgramData unavailable"))?;
-    Ok(PathBuf::from(data).join("ZeroTier/One"))
-}
-
-fn zt(args: &[&str]) -> io::Result<Vec<u8>> {
-    join_log::operation(match args.first().copied() {
-        Some("info") => "zt_info",
-        Some("listnetworks") => "zt_list_networks",
-        Some("join") => "zt_attach",
-        Some("leave") => "zt_detach",
-        _ => "zt_command",
-    });
-    let output = Command::new(home()?.join("zerotier-one_x64.exe"))
-        .args(["-q", "-j"])
-        .args(args)
-        .creation_flags(0x08000000)
-        .output()?;
-    if !output.status.success() {
-        if let Some(code) = output.status.code() {
-            join_log::number("exit_code", code.into());
-        }
-        return Err(io::Error::other("Local ZeroTier service unavailable"));
-    }
-    Ok(output.stdout)
-}
-
-fn query(args: &[&str]) -> io::Result<Value> {
-    parse_reply(&zt(args)?)
 }
 
 fn parse_reply(bytes: &[u8]) -> io::Result<Value> {
@@ -189,12 +155,9 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
                 Some(
                     s @ ("Invalid or expired invitation"
                     | "Invitation already used"
-                    | "Invalid device proof"
-                    | "Device proof required"
                     | "Membership revoked"
                     | "Invalid session"
-                    | "Existing device session required"
-                    | "Node already enrolled"),
+                    | "Session already enrolled"),
                 ) => s,
                 _ => "Invitation or membership denied",
             };
@@ -260,7 +223,7 @@ fn hex(value: &Value, length: usize) -> io::Result<String> {
         .as_str()
         .filter(|s| s.len() == length && s.bytes().all(|b| b.is_ascii_hexdigit()))
         .map(str::to_owned)
-        .ok_or_else(|| io::Error::other("Invalid ZeroTier identifier"))
+        .ok_or_else(|| io::Error::other("Invalid Uplink identifier"))
 }
 
 pub fn password_invite(host: &str, name: &str, password: &str) -> io::Result<String> {
@@ -274,320 +237,55 @@ pub fn password_invite(host: &str, name: &str, password: &str) -> io::Result<Str
     ))
 }
 
-fn device_is_prepared(home: &std::path::Path) -> bool {
-    let proof = home.join("uplink-proof");
-    join_log::operation("check_zt_executable");
-    if !home.join("zerotier-one_x64.exe").is_file() {
-        return false;
-    }
-    for (name, op) in [
-        ("certificate", "check_certificate"),
-        ("delegate.public", "check_public_key"),
-        ("delegate.secret", "check_signing_key"),
-    ] {
-        join_log::operation(op);
-        match fs::File::open(proof.join(name)).and_then(|file| file.metadata()) {
-            Ok(info) if info.is_file() && info.len() > 0 => {}
-            Ok(_) => {
-                join_log::number("valid_file", 0);
-                return false;
-            }
-            Err(error) => {
-                if let Some(code) = error.raw_os_error() {
-                    join_log::number("win32", code.into());
-                }
-                return false;
-            }
-        }
-    }
-    true
-}
-
-#[cfg(test)]
-#[test]
-fn device_stage_records_a_missing_planet_without_disclosing_paths_or_tokens() {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = dir.path().join("prefs.json");
-    let error = crate::settings::join_log::run(&profile, "link", &|_| {}, |progress| {
-        progress(crate::settings::JoinStage::Device);
-        verify_planet(dir.path(), b"private-planet-fixture")
-    })
-    .unwrap_err();
-    let log = fs::read_to_string(dir.path().join("last-join.log")).unwrap();
-    assert_eq!(error.kind(), io::ErrorKind::NotFound);
-    assert!(log.contains("stage=device"));
-    assert!(log.contains("result=failed operation=read_planet kind=NotFound win32=2"));
-    assert!(!log.contains("private-planet-fixture"));
-    assert!(!log.contains(dir.path().to_str().unwrap()));
-}
-
-#[cfg(test)]
-#[test]
-fn incomplete_device_proof_is_prepared_again() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path();
-    let proof = home.join("uplink-proof");
-    fs::create_dir(&proof).unwrap();
-    fs::write(home.join("zerotier-one_x64.exe"), b"fixture").unwrap();
-    fs::write(proof.join("certificate"), b"certificate").unwrap();
-    assert!(!device_is_prepared(home));
-    fs::write(proof.join("delegate.public"), b"public").unwrap();
-    fs::write(proof.join("delegate.secret"), b"").unwrap();
-    assert!(!device_is_prepared(home));
-    fs::write(proof.join("delegate.secret"), b"private fixture").unwrap();
-    assert!(device_is_prepared(home));
-}
-
-fn run_device_helper(host: &str, token: &str, action: &'static str) -> io::Result<()> {
-    join_log::operation("locate_setup_helper");
-    let helper = std::env::current_exe()?.with_file_name("UplinkNetwork.exe");
-    if !helper.is_file() {
-        return Err(io::Error::other(
-            "Run the Uplink transport installer to verify this device",
-        ));
-    }
-    // Ссылка не попадает в командную строку или журнал запуска процессов.
-    let root = PathBuf::from(
-        std::env::var_os("LOCALAPPDATA")
-            .ok_or_else(|| io::Error::other("Missing local profile"))?,
-    )
-    .join("Uplink/requests");
-    join_log::operation("create_setup_request");
-    fs::create_dir_all(&root)?;
-    let request = uuid::Uuid::new_v4().simple().to_string();
-    let file = root.join(&request);
-    use std::io::Write;
-    let mut out = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&file)?;
-    let guard = tempfile::TempPath::try_from_path(&file)?;
-    join_log::operation("write_setup_request");
-    write!(out, "uplink://{host}/invite/{token}")?;
-    drop(out);
-    let ps = PathBuf::from(
-        std::env::var_os("SystemRoot").ok_or_else(|| io::Error::other("Missing Windows path"))?,
-    )
-    .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    join_log::operation(if action == "repair-planet" {
-        "repair_planet_access"
-    } else {
-        "run_setup_helper"
-    });
-    let result = Command::new(ps)
-        .args(["-NoProfile","-NonInteractive","-Command",
-            "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; try { $p=Start-Process -FilePath $env:UPLINK_NETWORK_HELPER -Verb RunAs -ArgumentList ($env:UPLINK_HELPER_MODE+' '+$sid+' '+$env:UPLINK_NETWORK_REQUEST) -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode } catch { if ($_.Exception.GetBaseException().NativeErrorCode -eq 1223) {exit 38}; exit 2 }"])
-        .env("UPLINK_HELPER_MODE",action).env("UPLINK_NETWORK_HELPER",helper).env("UPLINK_NETWORK_REQUEST",request)
-        .creation_flags(0x08000000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
-    drop(guard);
-    let _ = fs::remove_dir(root);
-    setup_outcome(result)
-}
-
-fn setup_outcome(result: std::process::ExitStatus) -> io::Result<()> {
-    if let Some(code) = result.code() {
-        join_log::number("exit_code", code.into());
-    }
-    if !result.success() {
-        return Err(io::Error::other(match result.code() {
-            Some(31) => "Could not get the ZeroTier configuration from the server.",
-            Some(32) => "The existing ZeroTier installation could not be used safely.",
-            Some(33) => "Could not download the ZeroTier installer.",
-            Some(34) => "Could not verify or install the ZeroTier package.",
-            Some(35) => "The local ZeroTier service could not be prepared.",
-            Some(36) => "Could not prepare device verification for this Windows account.",
-            Some(37) => "Network setup requires elevation with the same Windows account.",
-            Some(38) => "Windows permission to prepare ZeroTier was cancelled.",
-            _ => "Network setup was not completed.",
-        }));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-#[test]
-fn setup_exit_code_is_visible_alongside_the_reported_device_failure() {
-    use std::os::windows::process::ExitStatusExt;
-    let dir = tempfile::tempdir().unwrap();
-    let profile = dir.path().join("prefs.json");
-    let result = join_log::run(&profile, "link", &|_| {}, |progress| {
-        progress(crate::settings::JoinStage::Device);
-        join_log::operation("run_setup_helper");
-        setup_outcome(std::process::ExitStatus::from_raw(35))
-    });
-    assert!(result.is_err());
-    let log = fs::read_to_string(dir.path().join("last-join.log")).unwrap();
-    assert!(log.contains("operation=run_setup_helper exit_code=35"));
-    assert!(log.contains("reason=The local ZeroTier service could not be prepared."));
-}
-
-fn verify_planet(home: &std::path::Path, expected: &[u8]) -> io::Result<()> {
-    join_log::operation("read_planet");
-    if fs::read(home.join("planet"))? != expected {
-        return Err(io::Error::other(
-            "This network requires a different ZeroTier root configuration",
-        ));
-    }
-    Ok(())
-}
-
-fn check_planet_access(
-    check: impl Fn() -> io::Result<()>,
-    repair: Option<impl FnOnce() -> io::Result<()>>,
-) -> io::Result<()> {
-    let mut result = check();
-    if let Err(error) = &result
-        && error.kind() == io::ErrorKind::PermissionDenied
-        && let Some(repair) = repair
-    {
-        if let Some(code) = error.raw_os_error() {
-            join_log::number("win32", code.into());
-        }
-        repair()?;
-        result = check();
-    }
-    result.map_err(|error| {
-        if error.kind() == io::ErrorKind::PermissionDenied {
-            if let Some(code) = error.raw_os_error() {
-                join_log::number("win32", code.into());
-            }
-            io::Error::new(
-                error.kind(),
-                "Windows denied read access to the ZeroTier root file (planet).",
-            )
-        } else {
-            error
-        }
-    })
-}
-
-#[cfg(test)]
-#[test]
-fn planet_access_rechecks_after_one_repair_and_never_accepts_a_different_root() {
-    use std::cell::Cell;
-    for accessible in [true, false] {
-        let repaired = Cell::new(false);
-        let result = check_planet_access(
-            || {
-                if repaired.get() && accessible {
-                    Ok(())
-                } else {
-                    Err(io::Error::from_raw_os_error(5))
-                }
-            },
-            Some(|| {
-                assert!(!repaired.replace(true));
-                Ok(())
-            }),
-        );
-        assert!(repaired.get());
-        if accessible {
-            result.unwrap();
-        } else {
-            let e = result.unwrap_err();
-            assert_eq!(
-                crate::i18n::error_message("ru", &e.to_string()),
-                "Windows запретила чтение файла конфигурации ZeroTier (planet)."
-            );
-        }
-    }
-    let mismatch = || {
-        Err(io::Error::other(
-            "This network requires a different ZeroTier root configuration",
-        ))
-    };
-    assert!(
-        check_planet_access(mismatch, Some(|| panic!("Do not repair mismatched roots"))).is_err()
-    );
-}
-
-pub fn bootstrap(
-    host: &str,
-    token: &str,
-    allow_setup_prompt: bool,
-    progress: &dyn Fn(crate::settings::JoinStage),
-) -> io::Result<Membership> {
-    join_log::operation("locate_zerotier");
-    let home = home()?;
-    if !allow_setup_prompt && !device_is_prepared(&home) {
-        return Err(io::Error::other(
-            "Prepare the Uplink transport before joining headlessly",
-        ));
-    }
-    let info = post(host, "bootstrap", json!({"token": token, "version":2}))?;
-    join_log::operation("decode_server_planet");
-    let planet = STANDARD
-        .decode(info["planet"].as_str().unwrap_or(""))
-        .map_err(io::Error::other)?;
-    if !(100..=65536).contains(&planet.len()) {
-        return Err(io::Error::other("Invalid ZeroTier root"));
+pub fn bootstrap(host: &str, token: &str, progress: &dyn Fn(crate::settings::JoinStage)) -> io::Result<Membership> {
+    let info = post(host, "bootstrap", json!({"token":token}))?;
+    if info["engine"] != "easytier" {
+        return Err(io::Error::other("Update the Uplink server to join this network."));
     }
     progress(crate::settings::JoinStage::Device);
-    let setup_needed = allow_setup_prompt && !device_is_prepared(&home);
-    if setup_needed {
-        run_device_helper(host, token, "prepare")?;
-    }
-    check_planet_access(
-        || verify_planet(&home, &planet),
-        (allow_setup_prompt && !setup_needed)
-            .then_some(|| run_device_helper(host, token, "repair-planet")),
-    )?;
-    join_log::operation("read_network_ids");
+    join_log::operation("start_network_service");
+    crate::service_control::power(true)?;
     Ok(Membership {
-        host: host.into(),
-        avatar_revision: None,
-        methods: None,
-        id: hex(
-            &info["id"],
-            if info.get("transport").is_some() {
-                32
-            } else {
-                16
-            },
-        )?,
-        transport: info.get("transport").map(|v| hex(v, 16)).transpose()?,
-        name: info["name"].as_str().unwrap_or(host).into(),
-        node: hex(&query(&["info"])?["address"], 10)?,
-        session: format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        ),
-        own_ip: String::new(),
-        rows: Vec::new(),
-        server_ms: None,
-        health: "ok".into(),
+        host: host.into(), avatar_revision: None, methods: None, assigned_ip: None, credential_expires_at: 0,
+        id: hex(&info["id"], 32)?, name: info["name"].as_str().unwrap_or(host).into(), node: String::new(),
+        session: format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()),
+        own_ip: String::new(), rows: Vec::new(), server_ms: None, health: "ok".into(),
         availability: Availability::Available,
     })
 }
 
-pub fn interface(id: &str) -> io::Result<Option<Value>> {
-    let list = query(&["listnetworks"])?;
-    Ok(list
-        .as_array()
-        .ok_or_else(|| io::Error::other("Invalid ZeroTier network list"))?
-        .iter()
-        .find(|n| n["id"] == id)
-        .cloned())
-}
-
-pub fn attach(id: &str) -> io::Result<()> {
-    zt(&["join", id]).map(|_| ())
-}
-
-fn retry_redeem(
-    mut redeem: impl FnMut() -> io::Result<Value>,
-    mut wait: impl FnMut(Duration) -> bool,
-) -> io::Result<Value> {
-    let mut delay = Duration::from_millis(400);
-    loop {
-        match redeem() {
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock && wait(delay) => {
-                delay = (delay * 2).min(Duration::from_millis(1600));
+fn interface(ip: &str) -> io::Result<Option<Value>> {
+    use windows_sys::Win32::{Foundation::*, NetworkManagement::{IpHelper::*, Ndis::NET_LUID_LH}};
+    use std::{ffi::CStr, ptr};
+    if ip.is_empty() { return Ok(None); }
+    let alias: Vec<u16> = "Uplink".encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let mut luid = NET_LUID_LH::default();
+        if ConvertInterfaceAliasToLuid(alias.as_ptr(), &mut luid) != 0 { return Ok(None); }
+        let mut index = 0;
+        let code = ConvertInterfaceLuidToIndex(&luid, &mut index);
+        if code != 0 { return Err(io::Error::from_raw_os_error(code as i32)); }
+        let mut size = 0;
+        if GetAdaptersInfo(ptr::null_mut(), &mut size) != ERROR_BUFFER_OVERFLOW { return Ok(None); }
+        let mut storage = vec![0usize; (size as usize).div_ceil(size_of::<usize>())];
+        let mut adapter: *mut IP_ADAPTER_INFO = storage.as_mut_ptr().cast();
+        let code = GetAdaptersInfo(adapter, &mut size);
+        if matches!(code, ERROR_BUFFER_OVERFLOW | ERROR_NO_DATA) { return Ok(None); }
+        if code != 0 { return Err(io::Error::from_raw_os_error(code as i32)); }
+        while !adapter.is_null() {
+            if (*adapter).Index == index {
+                let mut address = &(*adapter).IpAddressList as *const IP_ADDR_STRING;
+                while !address.is_null() {
+                    if CStr::from_ptr((*address).IpAddress.String.as_ptr()).to_bytes() == ip.as_bytes() {
+                        return Ok(Some(json!({"status":"OK", "assignedAddresses":[format!("{ip}/24")]})));
+                    }
+                    address = (*address).Next;
+                }
             }
-            result => return result,
+            adapter = (*adapter).Next;
         }
     }
+    Ok(None)
 }
 
 fn wait_for_virtual_ip(
@@ -618,13 +316,6 @@ fn assigned_ipv4(net: &Value) -> Option<std::net::Ipv4Addr> {
         .iter()
         .find_map(|address| address.as_str()?.split_once('/')?.0.parse().ok())
 }
-pub fn detach(id: &str) -> io::Result<()> {
-    if interface(id)?.is_some() {
-        zt(&["leave", id])?;
-    }
-    Ok(())
-}
-
 fn peer_ping(source: &str, destination: &str) -> Option<u32> {
     use std::{net::Ipv4Addr, ptr};
     use windows_sys::Win32::{Foundation::INVALID_HANDLE_VALUE, NetworkManagement::IpHelper::*};
@@ -668,42 +359,7 @@ fn peer_ping(source: &str, destination: &str) -> Option<u32> {
     }
 }
 
-pub fn shared_power(id: &str, enabled: bool) -> io::Result<()> {
-    let Some(net) = interface(id)? else {
-        return if enabled { attach(id) } else { Ok(()) };
-    };
-    let mac = net["mac"].as_str().unwrap_or("").replace(':', "-");
-    // Значения передаются через окружение, чтобы имя интерфейса не интерпретировалось оболочкой.
-    let script = r#"$ErrorActionPreference='Stop'
-$a=@(Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceDescription -like 'ZeroTier Virtual Port*' -and
-    ($_.MacAddress -eq $env:UPLINK_DEVICE_MAC -or $_.Name -eq ('ZeroTier One ['+$env:UPLINK_DEVICE_ID+']')) })
-if($a.Count -ne 1){exit 2}
-if($env:UPLINK_DEVICE_ENABLE -eq '1'){
-    if($a[0].Status -eq 'Disabled'){$a[0] | Enable-NetAdapter -Confirm:$false}
-} elseif($a[0].Status -ne 'Disabled'){$a[0] | Disable-NetAdapter -Confirm:$false}"#;
-    let exe = PathBuf::from(
-        std::env::var_os("SystemRoot").ok_or_else(|| io::Error::other("Windows unavailable"))?,
-    )
-    .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let result = Command::new(exe)
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("UPLINK_DEVICE_ID", id)
-        .env("UPLINK_DEVICE_MAC", mac)
-        .env("UPLINK_DEVICE_ENABLE", if enabled { "1" } else { "0" })
-        .creation_flags(0x08000000)
-        .output()?;
-    if result.status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other("Could not change Uplink adapter power"))
-    }
-}
-
 impl Membership {
-    pub fn interface_id(&self) -> &str {
-        self.transport.as_deref().unwrap_or(&self.id)
-    }
-
     pub fn leave_group(&self) -> io::Result<()> {
         post(&self.host, "leave", json!({"session":self.session})).map(|_| ())
     }
@@ -717,48 +373,38 @@ impl Membership {
         nick: &str,
         prefs: &std::path::Path,
         returning: bool,
-        prior: Option<&str>,
         progress: &dyn Fn(crate::settings::JoinStage),
     ) -> io::Result<()> {
-        if interface(self.interface_id())?.is_none() {
-            attach(self.interface_id())?;
-        }
-        let start = Instant::now();
         progress(crate::settings::JoinStage::Approval);
-        let resume = returning
-            && post(
-                &self.host,
-                "sync",
-                json!({"session":self.session,"nick":nick}),
-            )
-            .is_ok();
-        if !resume {
-            join_log::operation("sign_device_proof");
-            let proof = crate::device_proof::sign(&home()?, &self.node, token, &self.session)?;
-            let deadline = start + Duration::from_secs(25);
-            retry_redeem(
-                || {
-                    post(
-                        &self.host,
-                        "redeem",
-                        json!({"token":token,"node":self.node,"session":self.session,"nick":nick,"prior_session":prior,"proof":proof}),
-                    )
-                },
-                |delay| {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return false;
-                    }
-                    thread::sleep(delay.min(remaining));
-                    true
-                },
-            )?;
-        }
+        let grant = if returning && !self.node.is_empty() {
+            post(&self.host, "profile", json!({"session":self.session}))?
+        } else {
+            post(&self.host, "redeem", json!({"token":token, "session":self.session, "nick":nick}))?
+        };
+        join_log::operation("configure_uplink_adapter");
+        let ip = self.install_grant(&grant)?;
         progress(crate::settings::JoinStage::Address);
-        let net = wait_for_virtual_ip(start + Duration::from_secs(35), || {
-            interface(self.interface_id())
-        })?;
+        let net = wait_for_virtual_ip(Instant::now() + Duration::from_secs(35), || interface(&ip))?;
         self.refresh_using(nick, prefs, |_| Ok(Some(net)))
+    }
+
+    fn install_grant(&mut self, grant: &Value) -> io::Result<String> {
+        let node = hex(&grant["node"], 10)?;
+        if grant["id"] != self.id || (!self.node.is_empty() && self.node != node) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected network membership"));
+        }
+        let expiry = grant.get("credential_expires_at").map(|v| {
+            v.as_u64().filter(|t| *t > 0).ok_or(io::ErrorKind::InvalidData)
+        }).transpose()?.unwrap_or_default();
+        let profile: crate::tunnel_profile::Profile = serde_json::from_value(json!({
+            "id":self.id, "ip":grant["ip"], "endpoint":grant["endpoint"], "credential":grant["credential"]
+        }))?;
+        crate::tunnel_profile::save(&profile)?;
+        let ip = profile.ip.to_string();
+        self.node = node;
+        self.assigned_ip = Some(ip.clone());
+        self.credential_expires_at = expiry;
+        Ok(ip)
     }
 
     pub fn manage(&self, action: &str, value: &str) -> io::Result<Value> {
@@ -792,22 +438,14 @@ impl Membership {
         read_interface: impl FnOnce(&str) -> io::Result<Option<Value>>,
     ) -> io::Result<()> {
         let sync =
-            json!({"session":self.session,"network":self.id,"nick":nick,"avatar_revision":self.known_avatar(prefs)});
-        let mut snapshot = post(&self.host, "sync", sync.clone());
-        if snapshot.as_ref().is_ok_and(|v| v["needs_proof"] == true) {
-            self.rows.clear();
-            self.methods = None;
-            snapshot = (|| {
-                let proof =
-                    crate::device_proof::sign(&home()?, &self.node, &self.id, &self.session)?;
-                post(
-                    &self.host,
-                    "attest",
-                    json!({"session":self.session,"proof":proof}),
-                )?;
-                post(&self.host, "sync", sync)
-            })();
-        }
+            json!({"session":self.session,"network":self.id,"nick":nick,"avatar_revision":self.known_avatar(prefs),
+                "credential_expires_at":self.credential_expires_at});
+        let snapshot = post(&self.host, "sync", sync);
+        let renewal = match &snapshot {
+            Ok(data) if data["id"] == self.id => data.get("transport_profile")
+                .map(|grant| self.install_grant(grant)).transpose(),
+            _ => Ok(None),
+        };
         let avatar_status = match &snapshot {
             Ok(data) if data["id"] == self.id => self.apply_avatar(prefs, data),
             Err(e) if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound) => {
@@ -822,7 +460,7 @@ impl Membership {
         } else {
             None
         };
-        let net = read_interface(self.interface_id());
+        let net = read_interface(self.assigned_ip.as_deref().unwrap_or(""));
         let status = self.update_status(
             net.as_ref()
                 .ok()
@@ -839,7 +477,7 @@ impl Membership {
                 member.present = false;
             }
         }
-        status.and(net.map(|_| ())).and(avatar_status)
+        status.and(renewal.map(|_| ())).and(net.map(|_| ())).and(avatar_status)
     }
 
     fn update_status(
@@ -902,48 +540,8 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use super::*;
-
-    #[test]
-    fn invitation_pending_at_two_seconds_uses_four_requests() {
-        let elapsed = std::cell::Cell::new(Duration::ZERO);
-        let mut attempts = 0;
-        let result = retry_redeem(
-            || {
-                attempts += 1;
-                if elapsed.get() < Duration::from_secs(2) {
-                    Err(io::ErrorKind::WouldBlock.into())
-                } else {
-                    Ok(json!({"id":"joined"}))
-                }
-            },
-            |delay| {
-                elapsed.set(elapsed.get() + delay);
-                true
-            },
-        );
-        assert_eq!(result.unwrap()["id"], "joined");
-        assert_eq!(attempts, 4);
-    }
-
-    #[test]
-    fn slow_controller_stops_at_the_retry_budget() {
-        let mut pauses = Vec::new();
-        let pending = retry_redeem(
-            || Err(io::ErrorKind::WouldBlock.into()),
-            |delay| {
-                pauses.push(delay.as_millis());
-                pauses.len() < 5
-            },
-        );
-        assert_eq!(pending.unwrap_err().kind(), io::ErrorKind::WouldBlock);
-        assert_eq!(pauses, [400, 800, 1600, 1600, 1600]);
-        let denied = retry_redeem(
-            || Err(io::ErrorKind::PermissionDenied.into()),
-            |_| panic!("a rejected invitation must not be retried"),
-        );
-        assert_eq!(denied.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
-    }
 
     #[test]
     fn join_waits_for_a_ready_local_ipv4() {
@@ -1063,14 +661,4 @@ mod tests {
         assert_eq!(serde_json::to_value(&m).unwrap()["availability"], "available");
     }
 
-    #[test]
-    fn old_profiles_and_logical_networks_resolve_their_interface() {
-        let mut data = json!({"host":"example.org","id":"1111111111111111","session":"s","node":"n","name":"A"});
-        let old: Membership = serde_json::from_value(data.clone()).unwrap();
-        assert_eq!(old.interface_id(), old.id);
-        data["transport"] = json!("2222222222222222");
-        let group: Membership = serde_json::from_value(data).unwrap();
-        assert_eq!(group.interface_id(), "2222222222222222");
-        assert_eq!(group.key(), old.key());
-    }
 }

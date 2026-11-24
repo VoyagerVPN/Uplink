@@ -64,7 +64,7 @@ export component JoinDialog inherits DialogFrame {
     if !root.show-steps && root.error != "": Label { text: root.error; wrap: word-wrap; color: #e99087; }
     if root.show-steps: VerticalLayout {
         spacing: 5px;
-        for title[index] in [@tr("Check network access"), @tr("Prepare ZeroTier on this PC"), @tr("Confirm membership"), @tr("Get a virtual IP address")]: row := VerticalLayout {
+        for title[index] in [@tr("Check network access"), @tr("Start the Uplink network service"), @tr("Confirm membership"), @tr("Get a virtual IP address")]: row := VerticalLayout {
             private property <bool> current: index + 1 == NetworkUi.join-step;
             private property <bool> failed: root.failed && self.current;
             HorizontalLayout {

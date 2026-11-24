@@ -179,20 +179,9 @@ pub fn refresh_transport(path: &Path) -> io::Result<bool> {
     for mut live in rooms(path)?.into_iter().filter_map(|room| room.live) {
         let key = live.key();
         let before = serde_json::to_value(&live)?;
-        let mut adapter_available = false;
-        let result = if enabled {
-            (|| {
-                if crate::transport::interface(live.interface_id())?.is_none() {
-                    crate::transport::attach(live.interface_id())?;
-                }
-                adapter_available = true;
-                live.refresh(&nick, path)
-            })()
-        } else if live.transport.is_some() {
-            Ok(())
-        } else {
-            crate::transport::detach(&live.id)
-        };
+        let result = if enabled { live.refresh(&nick, path) } else { Ok(()) };
+        if live.availability.membership_gone() { crate::tunnel_profile::remove(&live.id)?; }
+        let adapter_available = !live.own_ip.is_empty();
         live.health = if !enabled {
             "ok"
         } else if !adapter_available {
@@ -349,14 +338,13 @@ pub fn join_with_progress(
             "headless_link"
         },
         progress,
-        |notify| join_link(path, url, allow_setup_prompt, notify),
+        |notify| join_link(path, url, notify),
     )
 }
 
 fn join_link(
     path: &Path,
     url: &str,
-    allow_setup_prompt: bool,
     progress: &dyn Fn(JoinStage),
 ) -> io::Result<()> {
     progress(JoinStage::Access);
@@ -367,23 +355,10 @@ fn join_link(
         if !options(path)?.enabled {
             return Err(io::Error::other("Uplink is disabled"));
         }
-        let mut live = crate::transport::bootstrap(host, token, allow_setup_prompt, progress)?;
+        let mut live = crate::transport::bootstrap(host, token, progress)?;
         let key = live.key();
-        let existing = crate::transport::interface(live.interface_id())?.is_some();
-        join_log::operation("read_memberships");
         let prefs = read(path)?;
-        let returning = prefs["live"][&key].is_object() || prefs["pending"][&key].is_object();
-        let known = live
-            .transport
-            .as_ref()
-            .is_some_and(|id| prefs["shared_devices"][id] == host);
-        let prior = rooms(path)?.into_iter().filter_map(|r| r.live).find(|r| {
-            live.transport.is_some()
-                && r.transport == live.transport
-                && r.host == host
-                && r.node == live.node
-                && r.id != live.id
-        });
+        let returning = prefs["live"][&key].is_object();
         join_log::operation("save_pending_membership");
         update(path, |prefs| {
             if let Some(prev) = prefs["live"][&key]
@@ -392,36 +367,22 @@ fn join_link(
             {
                 let prev: crate::transport::Membership =
                     serde_json::from_value(Value::Object(prev.clone()))?;
-                if prev.node != live.node {
-                    return Err(io::Error::other("ZeroTier identity has changed"));
-                }
                 live.session = prev.session;
-            } else if existing && !known && prior.is_none() {
-                return Err(io::Error::other("Network already managed outside Uplink"));
+                live.node = prev.node;
             }
             prefs["pending"][&key] = serde_json::to_value(&live)?;
             Ok(())
         })?;
         join_log::operation("read_nickname");
         let nick = nickname(path, &crate::peers::windows_name())?;
-        if let Err(err) = live.enroll(
-            token,
-            &nick,
-            path,
-            returning,
-            prior.as_ref().map(|r| r.session.as_str()),
-            progress,
-        ) {
-            if !existing && !known && prior.is_none() {
-                join_log::rollback(|| crate::transport::detach(live.interface_id()));
+        if let Err(error) = live.enroll(token, &nick, path, returning, progress) {
+            if !returning && live.assigned_ip.is_some() {
+                join_log::rollback(|| crate::tunnel_profile::remove(&live.id));
             }
-            return Err(err);
+            return Err(error);
         }
         join_log::operation("save_membership");
         return update(path, |prefs| {
-            if let Some(id) = &live.transport {
-                prefs["shared_devices"][id] = Value::String(host.to_owned());
-            }
             prefs["live"][&key] = serde_json::to_value(live)?;
             prefs["pending"].as_object_mut().map(|p| p.remove(&key));
             select_url(prefs, &key, true)
@@ -449,14 +410,9 @@ pub fn leave(path: &Path, target: Option<&str>) -> io::Result<()> {
             if let Ok(live) = serde_json::from_value::<crate::transport::Membership>(
                 prefs["live"][target].clone(),
             ) {
-                if live.transport.is_some() {
-                    if !live.availability.membership_gone() {
-                        live.leave_group()?;
-                    }
-                    prefs["live"].as_object_mut().map(|v| v.remove(target));
-                } else {
-                    crate::transport::detach(&live.id)?;
-                }
+                if !live.availability.membership_gone() { live.leave_group()?; }
+                crate::tunnel_profile::remove(&live.id)?;
+                prefs["live"].as_object_mut().map(|v| v.remove(target));
             }
             let removed = target.to_owned();
             if let Some(entries) = prefs["saved_passwords"].as_object_mut() {
@@ -559,22 +515,9 @@ pub fn set_option(path: &Path, key: &str, value: bool) -> io::Result<()> {
 }
 
 fn apply_power(path: &Path, value: bool) -> io::Result<()> {
-    if let Some(devices) = read(path)?["shared_devices"].as_object() {
-        for id in devices.keys() {
-            crate::transport::shared_power(id, value)?;
-        }
-    }
-    for room in rooms(path)? {
-        if let Some(live) = room.live {
-            if live.transport.is_some() {
-                continue;
-            }
-            if value {
-                crate::transport::attach(live.interface_id())?;
-            } else {
-                crate::transport::detach(&live.id)?;
-            }
-        }
+    let networks = rooms(path)?;
+    if networks.is_empty() || networks.iter().any(|room| room.live.is_some()) {
+        crate::service_control::power(value)?;
     }
     update(path, |prefs| {
         prefs["power"] = Value::Bool(value);
@@ -928,18 +871,18 @@ pub(crate) fn finish_creation(
         if prefs["creating"][scope] == own.id {
             prefs["creating"].as_object_mut().unwrap().remove(scope);
         }
-        Ok(())
+        select_url(prefs, &own.key(), false)
     })
 }
 
-pub fn vps_fingerprint(path: &Path, endpoint: &str) -> io::Result<String> {
-    Ok(read(path)?["vps_hosts"][endpoint]
-        .as_str()
-        .unwrap_or_default()
-        .into())
-}
 pub(crate) fn remember_vps(path: &Path, endpoint: &str, fingerprint: &str) -> io::Result<()> {
     update(path, |prefs| {
+        if let Some(saved) = prefs["vps_hosts"].get(endpoint) {
+            if saved.as_str() != Some(fingerprint) {
+                return Err(io::Error::other("The saved SSH key for this VPS has changed. Installation stopped."));
+            }
+            return Ok(());
+        }
         prefs["vps_hosts"][endpoint] = fingerprint.into();
         Ok(())
     })

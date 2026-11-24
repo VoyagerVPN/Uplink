@@ -199,6 +199,7 @@ export component RoomWindow inherits Window {
     in-out property <bool> adding-network;
     in-out property <string> pending-link;
     in-out property <bool> creating-network;
+    out property <bool> created-network-selected: root.creating-network && VpsUi.invitation!="" && VpsUi.network-key!="" && root.invite-url==VpsUi.network-key;
     function open-join() {
         NetworkUi.join-failure = "";
         root.error = "";
@@ -513,11 +514,14 @@ export component RoomWindow inherits Window {
     if root.adding-network || NetworkUi.joining: JoinDialog {
         error <=> root.error;
         link <=> root.pending-link;
-        create-network => { root.adding-network=false; VpsUi.failure=""; VpsUi.invitation=""; VpsUi.step=0; root.creating-network=true; }
+        create-network => { root.adding-network=false; VpsUi.failure=""; VpsUi.invitation=""; VpsUi.network-key=""; NetworkUi.error=""; VpsUi.step=0; root.creating-network=true; }
         submit(value) => { root.join-room(value); }
         close-form => { NetworkUi.join-failure = ""; root.adding-network = false; root.pending-link = ""; root.error = ""; root.join-dialog-closed(); }
     }
     if root.creating-network: VpsDialog {
+        visible:NetworkUi.modal=="";
+        enabled:NetworkUi.modal=="";
+        created-network-selected:root.created-network-selected;
         copy-link(value) => { return root.copy(value); }
         closed => {root.creating-network=false; VpsUi.failure=""; VpsUi.invitation=""; root.join-dialog-closed();}
     }

@@ -207,12 +207,13 @@ fn choose_icon() -> io::Result<HICON> {
     let path = crate::settings::path()?;
     let mode = crate::settings::tray_mode(&path)?;
     let options = crate::settings::options(&path)?;
+    let light = light_taskbar();
     let id = match mode.as_str() {
         _ if !options.enabled => 4,
         _ if options.health == "critical" => 6,
         _ if options.health == "warning" => 5,
         "system" => {
-            if light_taskbar() {
+            if light {
                 2
             } else {
                 3
@@ -224,6 +225,13 @@ fn choose_icon() -> io::Result<HICON> {
                 .and_then(|r| r.server_ms),
         ),
         _ => 1,
+    };
+    let id = match (light, id) {
+        (true, 1) => 7,
+        (true, 4) => 8,
+        (true, 5) => 9,
+        (true, 6) => 10,
+        _ => id,
     };
     let icon = unsafe {
         LoadImageW(

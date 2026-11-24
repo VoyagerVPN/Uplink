@@ -1,14 +1,14 @@
 [Unit]
-Description=Uplink test instance API
-Requires=uplink-zt.service
-After=uplink-zt.service
+Description=Uplink instance API
+Requires=uplink-engine.service
+After=uplink-engine.service
 
 [Service]
-User=uplink-zt
-Group=uplink-zt
-WorkingDirectory=/opt/uplink-zt
+User=uplink-net
+Group=uplink-net
+WorkingDirectory=/opt/uplink
 ExecStart=/usr/bin/python3 -E -s -B -c "import instance; instance.serve()"
-StateDirectory=uplink-instance
+StateDirectory=uplink-members
 StateDirectoryMode=0700
 NoNewPrivileges=true
 ProtectSystem=strict

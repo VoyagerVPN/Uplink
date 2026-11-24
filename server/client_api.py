@@ -1,5 +1,4 @@
 """API клиентов. TLS завершается на обратном прокси инстанса."""
-import base64
 import hashlib
 import re
 import os
@@ -8,10 +7,8 @@ import threading
 from contextlib import contextmanager
 from collections import deque
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 
-from instance import ApiError, OwnerRequest
-from invites import Invitations
+from instance import ApiError, OwnerRequest, networks
 
 
 class LoginBudget:
@@ -64,26 +61,28 @@ LOGIN_BUDGET = LoginBudget(12, 60)
 
 
 def route(method, path, data):
-    api = Invitations()
+    api = networks()
     if method != "POST":
         raise ApiError(403, "Client access only")
     if path == "/v1/bootstrap":
-        info = api.lookup(data.get("token"))
-        if "transport" in info and data.get("version") != 2:
-            raise ApiError(400, "Update Uplink to join a logical network")
-        info["planet"] = base64.b64encode(Path("/var/lib/uplink-zt/planet").read_bytes()).decode("ascii")
-        return 200, info
+        return 200, api.lookup(data.get("token"))
     if path == "/v1/login":
         with LOGIN_BUDGET.admit():
             return 200, {"token": api.login(data.get("name"), data.get("password"))}
-    if path == "/v1/redeem":
-        return 200, api.redeem(data.get("token"), data.get("node"), data.get("session"), data.get("nick"), data.get("prior_session"), data.get("proof"))
-    if path == "/v1/attest":
-        return 200, api.attest(data.get("session"), data.get("proof"))
+    if path in ("/v1/redeem", "/v1/profile"):
+        profile = (api.redeem(data.get("token"), data.get("session"), data.get("nick"))
+                   if path == "/v1/redeem" else api.profile(data.get("session")))
+        return 200, {**profile, "endpoint": os.environ["UPLINK_UDP_ENDPOINT"]}
     if path == "/v1/leave":
         return 200, api.leave(data.get("session"))
     if path == "/v1/sync":
-        return 200, api.sync(data.get("session"), data.get("nick"), data.get("avatar_revision"), data.get("network"))
+        session, network = data.get("session"), data.get("network")
+        snapshot = api.sync(session, data.get("nick"), data.get("avatar_revision"), network)
+        expiry = data.get("credential_expires_at")
+        if network == snapshot["id"] and type(expiry) is int and 0 <= expiry <= api.now():
+            # profile повторно проверяет членство под той же блокировкой, что и отзыв.
+            snapshot["transport_profile"] = {**api.profile(session), "endpoint": os.environ["UPLINK_UDP_ENDPOINT"]}
+        return 200, snapshot
     if path == "/v1/avatar":
         return 200, api.manage(data.get("session"), "avatar", data.get("value"))
     if path == "/v1/manage":
@@ -98,22 +97,23 @@ def route(method, path, data):
 # Из журнала нельзя восстановить билет. Метка действует до перезапуска процесса.
 _LOG_KEY = os.urandom(32)
 _STAGES = {"/v1/" + s: s for s in (
-    "login", "bootstrap", "redeem", "attest", "sync", "share", "avatar", "manage", "ping", "leave"
+    "login", "bootstrap", "redeem", "profile", "sync", "share", "avatar", "manage", "ping", "leave"
 )}
 _REASONS = {msg: msg.lower().replace(" ", "_") for msg in (
     "Invalid network credentials", "Invalid credential", "Invalid or expired invitation",
     "Invitation already used", "Invitations are disabled", "Waiting for network join",
-    "Device identity changed", "Membership revoked", "Session was retired",
-    "Node already enrolled", "Existing device session required", "Node or session already enrolled",
-    "Network deleted", "Invalid session", "Invalid membership", "Device proof required", "Invalid device proof",
-    "Device verification unavailable", "Too many login attempts", "Invalid nickname", "Invalid node",
+    "Membership revoked", "Network engine unavailable", "Invalid network engine response",
+    "Session already enrolled", "Network is full",
+    "Network deleted", "Invalid session", "Invalid membership",
+    "Too many login attempts", "Invalid nickname", "Invalid node",
     "Invalid request", "Invalid body size", "Expected a JSON object", "Local service unavailable",
-    "Client access only", "Update Uplink to join a logical network", "Unknown private network",
+    "Client access only", "Unknown private network",
     "Network management permission required", "Owner permission required",
 )}
 
 
 class ClientRequest(OwnerRequest):
+    protocol_version = "HTTP/1.1"
     def address_string(self):
         return "uplink-client"
 

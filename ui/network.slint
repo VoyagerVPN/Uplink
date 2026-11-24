@@ -123,6 +123,25 @@ component RosterRow inherits HorizontalLayout {
     function confirm(kind:string){NetworkUi.target=root.person.ip;NetworkUi.target-name=root.person.name;NetworkUi.error="";NetworkUi.modal=kind;}
 }
 
+export component AvatarTile inherits ButtonFocus {
+    in property <bool> empty-placeholder;
+    property <DropZone> bounds: {x:self.absolute-position.x/1px,y:self.absolute-position.y/1px,w:self.width/1px,h:self.height/1px};
+    init=>{NetworkUi.drop-bounds=self.bounds;}
+    changed bounds=>{NetworkUi.drop-bounds=self.bounds;}
+    width:64px;height:84px;enabled:NetworkUi.avatar-editable && NetworkUi.manages;accessible-role:button;accessible-label:@tr("Change avatar");
+    accessible-action-default=>{NetworkUi.action("pick","");}
+    key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {NetworkUi.action("pick","");return accept;}return reject;}
+    Rectangle {y:0px;height:64px;border-radius:14px;clip:true;background:#2d3526;
+        if !root.empty-placeholder && !NetworkUi.has-avatar: Label{text:NetworkUi.initials;font-size:22px;font-weight:600;color:#bfec70;horizontal-alignment:center;}
+        if root.empty-placeholder && !NetworkUi.has-avatar: Image{width:20px;height:20px;source:@image-url("../assets/icon/add-network.svg");}
+        if NetworkUi.has-avatar: Image{width:parent.width;height:parent.height;source:NetworkUi.avatar;image-fit:cover;}
+        if NetworkUi.dragging-file: Rectangle{background:#10121480;border-radius:14px;Label{text:"+";color:#bfec70;font-size:28px;horizontal-alignment:center;}}
+    }
+    if NetworkUi.dragging-file: Image{x:-4px;y:-4px;width:72px;height:72px;source:@image-url("../assets/icon/drop-outline.svg");}
+    if NetworkUi.avatar-editable: Label{y:68px;height:16px;width:parent.width;text:@tr("Change");font-size:12px;color:hit.has-hover || root.show-focus?#eff0f2:#a7abb2;horizontal-alignment:center;}
+    hit:=TouchArea{enabled:root.enabled;mouse-cursor:self.enabled?pointer:default;clicked=>{root.focus-from-pointer();NetworkUi.action("pick","");}}
+}
+
 export component NetworkPage inherits VerticalLayout {
     in-out property <bool> editing;
     padding-top:6px;spacing:12px;
@@ -140,22 +159,7 @@ export component NetworkPage inherits VerticalLayout {
     }
     if NetworkUi.panel=="general": Rectangle {
         height:116px;border-radius:8px;background:#202225;
-        avatar-button:=ButtonFocus {
-            property <DropZone> bounds: {x:self.absolute-position.x/1px,y:self.absolute-position.y/1px,w:self.width/1px,h:self.height/1px};
-            init=>{NetworkUi.drop-bounds=self.bounds;}
-            changed bounds=>{NetworkUi.drop-bounds=self.bounds;}
-            x:16px;y:16px;width:64px;height:84px;enabled:NetworkUi.avatar-editable;accessible-role:button;accessible-label:@tr("Change avatar");
-            accessible-action-default=>{NetworkUi.action("pick","");}
-            key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {NetworkUi.action("pick","");return accept;}return reject;}
-            Rectangle {y:0px;height:64px;border-radius:14px;clip:true;background:#2d3526;
-                if !NetworkUi.has-avatar: Label{text:NetworkUi.initials;font-size:22px;font-weight:600;color:#bfec70;horizontal-alignment:center;}
-                if NetworkUi.has-avatar: Image{width:parent.width;height:parent.height;source:NetworkUi.avatar;image-fit:cover;}
-                if NetworkUi.dragging-file: Rectangle{background:#10121480;border-radius:14px;Label{text:"+";color:#bfec70;font-size:28px;horizontal-alignment:center;}}
-            }
-            if NetworkUi.dragging-file: Image{x:-4px;y:-4px;width:72px;height:72px;source:@image-url("../assets/icon/drop-outline.svg");}
-            if NetworkUi.avatar-editable: Label{y:68px;height:16px;width:parent.width;text:@tr("Change");font-size:12px;color:hit.has-hover || avatar-button.show-focus?#eff0f2:#a7abb2;horizontal-alignment:center;}
-            hit:=TouchArea{enabled:NetworkUi.avatar-editable;mouse-cursor:self.enabled?pointer:default;clicked=>{avatar-button.focus-from-pointer();NetworkUi.action("pick","");}}
-        }
+        AvatarTile {x:16px;y:16px;}
         VerticalLayout {x:94px;width:parent.width - 110px;alignment:center;
             EditableTitle{value:NetworkUi.name;type-size:18px;show-pencil:true;field-name:@tr("Network name");action-label:@tr("Rename network");editing<=>root.editing;save(s)=>{NetworkUi.action("name",s);}}
             Label {height:16px;text:NetworkUi.server;color:#a7abb2;font-size:12px;}
