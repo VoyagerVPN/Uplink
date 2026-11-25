@@ -56,15 +56,24 @@ fn transform(network: &str, bytes: &[u8], encrypt: bool) -> io::Result<Vec<u8>> 
     Ok(result)
 }
 
+pub(super) fn protect(context: &str, secret: &str) -> io::Result<String> {
+    transform(context, secret.as_bytes(), true).map(|bytes| STANDARD.encode(bytes))
+}
+
+pub(super) fn unprotect(context: &str, sealed: &str) -> io::Result<String> {
+    let bytes = STANDARD
+        .decode(sealed)
+        .map_err(|_| io::ErrorKind::InvalidData)?;
+    String::from_utf8(transform(context, &bytes, false)?)
+        .map_err(|_| io::ErrorKind::InvalidData.into())
+}
+
 pub(super) fn seal(network: &str, password: &str) -> io::Result<String> {
-    transform(network, password.as_bytes(), true)
-        .map(|bytes| STANDARD.encode(bytes))
+    protect(network, password)
         .map_err(|_| io::Error::other("Could not save the password on this PC."))
 }
 
 pub(super) fn open(network: &str, sealed: &str) -> io::Result<String> {
-    let failed = || io::Error::other("Could not read the password saved on this PC.");
-    let bytes = STANDARD.decode(sealed).map_err(|_| failed())?;
-    String::from_utf8(transform(network, &bytes, false).map_err(|_| failed())?)
-        .map_err(|_| failed())
+    unprotect(network, sealed)
+        .map_err(|_| io::Error::other("Could not read the password saved on this PC."))
 }

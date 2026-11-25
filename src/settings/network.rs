@@ -93,7 +93,7 @@ impl Room {
                     },
                     ip: &row.ip,
                     own: row.node == live.node,
-                    online: row.present,
+                    online: row.present || (row.node != live.node && row.ping_ms.is_some()),
                     ping_ms: row.ping_ms,
                 })
                 .collect()

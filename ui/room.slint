@@ -8,7 +8,7 @@ export { VpsUi } from "vps-dialog.slint";
 import { JoinDialog } from "join-dialog.slint";
 import { NetworkDialog } from "network-dialog.slint";
 export { NetworkUi, Person } from "network.slint";
-import { Label, HintCard, ButtonFocus, Action, EditableTitle, CopyFeedback } from "controls.slint";
+import { Label, HintCard, ButtonFocus, Action, EditableTitle, CopyFeedback, DialogTrigger } from "controls.slint";
 import { ButtonStyle } from "button-style.slint";
 import { ListView } from "std-widgets.slint";
 import "../assets/fonts/Inter-Regular.ttf";
@@ -235,8 +235,8 @@ export component RoomWindow inherits Window {
         root.change-option(key, value);
     }
     callback change-option(string, bool);
-    property <string> status-text: !power-on ? @tr("Uplink is off") : health == "critical" ? @tr("Network adapter unavailable") : health == "warning" ? @tr("Server connection is unstable") : @tr("Uplink is on");
-    property <color> status-color: !power-on ? #91969f : health == "critical" ? #f07474 : health == "warning" ? #f2a94e : #bfec70;
+    property <string> status-text: !power-on ? @tr("Uplink is off") : health == "starting" ? @tr("Waiting for the network adapter…") : health == "critical" ? @tr("Network adapter unavailable") : health == "warning" ? @tr("Server connection is unstable") : @tr("Uplink is on");
+    property <color> status-color: !power-on || health == "starting" ? #91969f : health == "critical" ? #f07474 : health == "warning" ? #f2a94e : #bfec70;
     FocusScope { focus-on-tab-navigation: false; }
     if root.language-open: TouchArea { clicked => { root.language-open = false; } }
     FocusScope {enabled:NetworkUi.modal=="" && !UpdateUi.dialog-open && !root.adding-network && !root.creating-network && !NetworkUi.joining;focus-on-tab-navigation:false;
@@ -396,6 +396,9 @@ export component RoomWindow inherits Window {
             }
             if root.error != "" && !root.editing: Label { text: root.error; color: #e99087; height: 26px; }
         }
+        if NetworkUi.panel=="" && !root.settings-open && root.power-on && root.health == "starting": Label {
+            height: 24px; text: root.status-text; color: #a2a7af;
+        }
         if NetworkUi.panel=="" && !root.settings-open && root.power-on && root.health == "critical": VerticalLayout {
             spacing: 4px; padding-top: 15px;
             Label { text: root.status-text; font-size: 18px; height: 30px; font-weight: 600; }
@@ -406,8 +409,9 @@ export component RoomWindow inherits Window {
             vertical-stretch: 0; spacing: 8px; padding-top: 10px;
             Label { height: 28px; text: @tr("My networks"); font-size: 16px; font-weight: 600; }
             HorizontalLayout { alignment: start;
-                Action { leading-icon: true; glyph: @image-url("../assets/icon/add-network.svg");
-                    caption: @tr("Join network"); invoked => { root.open-join(); } }
+                DialogTrigger { leading-icon: true; glyph: @image-url("../assets/icon/add-network.svg");
+                    caption: @tr("Join network"); dialog-open: root.adding-network || root.creating-network;
+                    open-dialog => { root.open-join(); } }
             }
             if !root.adding-network && root.error != "" && !root.editing: Label { vertical-stretch: 0; wrap: word-wrap; text: root.error; color: #e99087; }
         }
@@ -445,10 +449,11 @@ export component RoomWindow inherits Window {
                         }
                     }
                 }
-                Action {
+                DialogTrigger {
                     x: 0px; y: rail-list.height + 1px; width: 34px; height: 30px;
                     icon-only: true; glyph: @image-url("../assets/icon/add-network.svg"); glyph-size: 18px;
-                    caption: @tr("Join network"); invoked => { root.open-join(); }
+                    caption: @tr("Join network"); dialog-open: root.adding-network || root.creating-network;
+                    open-dialog => { root.open-join(); }
                 }
             }
             VerticalLayout {
@@ -457,7 +462,11 @@ export component RoomWindow inherits Window {
                     height: 32px; spacing: 0px;
                     Label {text:root.room-name;font-size:18px;font-weight:600;horizontal-stretch:1;overflow:elide;}
                     if NetworkUi.manages || root.is-creator: Action{width:25px;height:28px;icon-only:true;glyph:@image-url("../assets/icon/settings.svg");caption:@tr("Network settings");invoked=>{NetworkUi.panel="general";NetworkUi.error="";}}
-                    if !NetworkUi.live || NetworkUi.manages: Action {width:25px;height:28px;icon-only:true;caption:@tr("Invite");glyph:@image-url("../assets/icon/invite.svg");invoked=>{NetworkUi.open-invite();}}
+                    if !NetworkUi.live || NetworkUi.manages: DialogTrigger {
+                        width:25px;height:28px;icon-only:true;caption:@tr("Invite");glyph:@image-url("../assets/icon/invite.svg");
+                        dialog-open: NetworkUi.modal == "invite";
+                        open-dialog => { NetworkUi.open-invite(); }
+                    }
                     Action { width: 25px; height: 28px; icon-only: true; caption: @tr("Leave"); glyph: @image-url("../assets/icon/leave.svg"); invoked => { root.leave-room(); } }
                 }
                 Rectangle { height: 2px; }
@@ -512,9 +521,11 @@ export component RoomWindow inherits Window {
     }
     }
     if root.adding-network || NetworkUi.joining: JoinDialog {
+        visible: !root.creating-network && NetworkUi.modal == "";
+        enabled: !root.creating-network && NetworkUi.modal == "";
         error <=> root.error;
         link <=> root.pending-link;
-        create-network => { root.adding-network=false; VpsUi.failure=""; VpsUi.invitation=""; VpsUi.network-key=""; NetworkUi.error=""; VpsUi.step=0; root.creating-network=true; }
+        create-network => { VpsUi.failure=""; VpsUi.invitation=""; VpsUi.network-key=""; NetworkUi.error=""; VpsUi.step=0; root.creating-network=true; root.adding-network=false; }
         submit(value) => { root.join-room(value); }
         close-form => { NetworkUi.join-failure = ""; root.adding-network = false; root.pending-link = ""; root.error = ""; root.join-dialog-closed(); }
     }
@@ -526,5 +537,5 @@ export component RoomWindow inherits Window {
         closed => {root.creating-network=false; VpsUi.failure=""; VpsUi.invitation=""; root.join-dialog-closed();}
     }
     if NetworkUi.modal!="": NetworkDialog {}
-    if UpdateUi.dialog-open: UpdateDialog {}
+    if UpdateUi.dialog-open && !root.adding-network && !NetworkUi.joining && !root.creating-network && NetworkUi.modal == "": UpdateDialog {}
 }

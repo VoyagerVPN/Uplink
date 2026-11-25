@@ -21,6 +21,7 @@ Earlier dated measurements and release notes below refer to the transport shippe
 - **0.1.2** gives release notes a compact scrollbar with a dedicated gutter.
 - **0.1.3** shares network avatars and translates connection and settings errors.
 - **0.2.0** covers VPS setup from the Windows UI, from entering SSH credentials through creating the first network and receiving its invitation.
+- **0.3.0** adds member-to-member SSH access with explicit consent on the receiving PC. Resume two-PC Minecraft LAN discovery diagnostics after the SSH workflow is available.
 
 ## Port of the approved HTML prototype to Rust
 
@@ -104,6 +105,7 @@ Multiple Uplink networks can be active simultaneously. Selecting a network in th
 
 ## Adapter lifecycle
 
+- [x] On application startup, queue the network service start before refreshing a saved membership when Uplink and auto-connect are on. Preserve a pending power-off request and skip deleted or denied memberships. Verified the stopped-to-running transition with an isolated Windows service.
 - [x] Use `Uplink` as the Windows adapter name and `Uplink Tunnel` as its description in the Wintun prototype. Windows supplies the Network Connections icon.
 - [x] Verify delegated start/stop on a temporary Windows service with a restricted, medium-integrity client. Before delegation Windows denied access. After delegation three start/stop cycles opened a real Wintun session and removed the temporary adapter on stop. The host had UAC disabled.
 - [x] Verify the installed Windows CLI against a secure Linux peer using a per-member EasyTier credential. A restricted process completed three on/off cycles, received a UDP reply after each start, and saw the adapter removed after each stop. The administrator staged the profile before the test.
@@ -117,6 +119,13 @@ Earlier results with one adapter per network:
 - [x] Measure from clicking Enable Uplink to the first successful packet exchange with a peer's virtual IP. The target was 30 s including adapter creation and address assignment. From the installed Windows button to the first Linux UDP response, one network took 5.04 and 7.25 s and two networks took 8.32–10.88 s.
 
 ## Server and transport
+
+- [x] Prototype a two-party SSH access request in the UI. The Administrator switch defaults to on for each request. Turning it off selects standard user access. The recipient chooses a validity period (until revoked, 15 minutes, one hour or one day). Browser checks cover rejection, cancellation, grant, persistence, expiry, closing from either side and requesting again.
+- [x] In the SSH prototype, place the active terminal badge after the owner crown or administrator shield beside the nickname. Keep the IP address in its own column.
+- [x] Hovering anywhere on a participant row reveals its vertical ellipsis and IP copy icon. Keyboard focus also reveals the actions. Keep the ellipsis visible while its menu is open. Label menu items with a terminal, pencil or remove-member icon. Preserve the copy check mark for two seconds and keep the active SSH badge visible at rest.
+- [x] Give every participant a vertical ellipsis in the main table. Members can request SSH access to another participant. Owners and administrators can also rename or remove participants within their existing role permissions. A network nickname is shared within that network and leaves the Windows profile and other networks unchanged. The self menu allows changing one's network nickname.
+- [x] Exercise Windows OpenSSH on loopback with disposable keys and a fixed test command. Verify rejection before consent, a successful certificate login, rejection after revocation or expiry, a fresh key on reapproval and termination of an established session in a Windows job.
+- [ ] Connect authenticated member requests to native Windows consent and per-grant SSH credentials. Each selected Windows privilege level must be verified with a real session. Display active access only after local activation succeeds. Enforce revocation and expiry for existing and future sessions, including across restart and network leave. Verify with two consenting PCs.
 
 - [x] Generate a private Linux root from the supplied UDP endpoint with the stock ZeroTier 1.16.2 binary. Confirm repeated setup preserves the keys and signed planet and refuses an incomplete bundle or endpoint change.
 
@@ -147,6 +156,7 @@ Uplink is for private networks among friends. The project aims to publish the Wi
 - [x] Test an established connection between two Linux clients. TCP, UDP and UDP broadcast passed both ways over the virtual interfaces. All 30 messages arrived in the final run via instance 129. Results immediately after joining and after restarting were also recorded.
 - [ ] Measure broadcast readiness immediately after joining. On the first run in a new network, all five packets were lost in one direction. On retry, all five arrived in each direction. Over three Linux rejoins, the first broadcasts in both directions arrived 0.45–3.31 s after the timestamp taken before join. The upper bound and reason for the initial loss remain open.
 - [ ] Repeat joining, bidirectional TCP and UDP, UDP broadcast and latency measurement with two clean Windows Uplink clients on different physical networks. Record whether the route is direct or relayed.
+- [x] Confirm that a friend can enter a real player-hosted Minecraft world over Uplink. On 2026-11-24 the host reported a successful join. The world did not appear through automatic LAN discovery in that session.
 - [ ] Verify automatic LAN world discovery in an unmodified Minecraft Java client on Windows. Open a world to LAN in each of two independent Uplink networks and a third on the physical LAN. All three must appear in Multiplayer and be joinable without typing an address, switching networks or manually changing Windows routes. Prefer a shared discovery mechanism that works for other games. Verify both hosting and joining on real PCs.
 - [x] In the local receive-side experiment, the Minecraft Java 26.2 detector and an independent listener on a random IPv4 multicast group and UDP port each found two overlay announcements and a host-local announcement on Ethernet. The delivery path followed Windows multicast memberships without game-specific addresses, ports, payload parsing or routes. Turning it off hid both overlay announcements. The home source used multicast loopback. Entry into real game worlds and discovery from another physical LAN host are still open.
 - [x] Repeat receive-side discovery over the internet with service 129. The stock Minecraft Java 26.2 detector found the remote fixture over EasyTier 2.7.1 on the public UDP mapping. A Java Edition status request to the discovered endpoint returned the matching description and ping nonce. A separate random UDP group and port also worked. The remote fixture simulated the game server. Full gameplay, hosting from a Windows PC, peer-to-peer NAT traversal and simultaneous physical-LAN discovery remain open.
@@ -154,6 +164,7 @@ Uplink is for private networks among friends. The project aims to publish the Wi
 - [x] Connect the invitation service, real virtual IPs, presence and nickname updates. Verified HTTPS invitations, pasting a link, Windows uplink:// registration, approval of a pending node, controller-assigned address, presence and propagation of a Windows nickname to a second API client.
 - [x] Check owner permissions on the server and propagate renames. Owners and admins could rename a network and an ordinary member was denied. A second node saw the new name. The previous owner was denied after transferring ownership.
 - [x] Measure server and peer latency separately from sample values. For real networks, the local row shows HTTPS /v1/ping time after TLS setup. Windows sends peer ICMP from the selected adapter's IP. Real responses were checked on two /24 networks. Gray bars mark a missing measurement.
+- [x] Poll peers on a five-second schedule independent of HTTPS sync. Skip missed ticks and retry a timeout once before clearing the reading. Record each attempt, address pair, duration and Windows error or RTT in the rotating local peer ping log.
 - [x] Reuse HTTPS connections across background sync cycles. With three saved memberships, a 50-second capture on the Windows client saw one TCP handshake to instance 129 at startup. A 50-second window starting ten seconds later saw zero new handshakes. A loopback TLS test also covers a server closing the connection between requests.
 - [ ] Verify an invitation between two installed Uplink clients. After joining, both should see the new membership and each other's addresses and exchange packets. An installed Windows client and a Linux ZeroTier node using the test API client passed. Two installed Uplink clients remain to be checked.
 
@@ -221,6 +232,9 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 
 ## Joining a network
 
+- [x] Share the dialog frame, header and action sizing across join, invitations, avatar, member confirmations, VPS setup and updates. Join and VPS use the same step indicator. The update waits behind an open flow, and Enter defaults to Cancel in member confirmations. Compare the 16 before and after Slint captures in `.temp/modal-unification/`.
+- [x] Give dialog text actions a shared neutral fill or a primary accent. The link form uses a primary icon to join. Opening a member confirmation with the mouse leaves the safe default active without a focus outline. Tab navigation shows the outline.
+- [x] Keep dialog actions reachable when a long localized error scrolls. Verify 16 modal states at 125% in Russian and 150% in English, and return keyboard focus to the opener after closing join, release notes, member confirmation and avatar dialogs. Render the crop preview at the window DPI and retain 512 × 512 saved avatars.
 - [x] Open a centered join dialog from the network rail or the empty network list. Keep both sign-in methods and connection progress inside the dialog. Restore the entered values on failure.
 - [x] Show a copy icon to the right of the selected network's server address on hover. Keep the check visible for two seconds after copying, including when the pointer leaves.
 - [x] Network managers can reveal a password they saved on this Windows profile after reopening settings. Protect the local copy with per-user DPAPI and check the server's password revision when available.

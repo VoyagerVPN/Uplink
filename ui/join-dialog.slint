@@ -1,4 +1,4 @@
-import { DialogFrame, Label, Action } from "controls.slint";
+import { DialogFrame, DialogActions, DialogButton, DialogError, DialogStep, Label } from "controls.slint";
 import { TextField } from "text-field.slint";
 import { NetworkUi, Tab } from "network.slint";
 
@@ -13,13 +13,9 @@ export component JoinDialog inherits DialogFrame {
     callback create-network();
     callback submit(string);
     callback close-form();
+    title: root.failed ? @tr("Could not join network") : NetworkUi.joining ? @tr("Joining network") : @tr("Join network");
+    show-close: !NetworkUi.joining;
     dismiss => { if !NetworkUi.joining { root.close-form(); } }
-
-    HorizontalLayout {
-        height: 28px;
-        Label { text: root.failed ? @tr("Could not join network") : NetworkUi.joining ? @tr("Joining network") : @tr("Join network"); font-size: 19px; font-weight: 600; }
-        if !NetworkUi.joining: Action { width: 28px; caption: "×"; title-button: true; accessible-label: @tr("Close"); invoked => { root.dismiss(); } }
-    }
     if !root.show-steps: HorizontalLayout {
         height: 28px; spacing: 2px;
         Tab { title: @tr("Link"); selected: !NetworkUi.credentials; choose => { if NetworkUi.credentials { root.error = ""; NetworkUi.credentials = false; } } }
@@ -33,7 +29,7 @@ export component JoinDialog inherits DialogFrame {
             submit(value) => { if value != "" { root.submit(value); } }
             cancel => { root.dismiss(); }
         }
-        Action { width: 32px; height: 32px; icon-only: true; caption: @tr("Join");
+        DialogButton { width: 32px; primary: true; icon-only: true; caption: @tr("Join"); glyph-color: #263415;
             available: root.link != ""; glyph: @image-url("../assets/icon/join.svg"); glyph-size: 20px;
             invoked => { root.submit(root.link); } }
     }
@@ -54,34 +50,26 @@ export component JoinDialog inherits DialogFrame {
             pass := TextField { text <=> root.password; secret: true; field-name: @tr("Password");
                 submit(s) => { if send.available { send.invoked(); } } cancel => { root.dismiss(); } }
         }
-        HorizontalLayout { alignment: end; height: 32px;
-            send := Action { caption: @tr("Join"); primary: true;
+        DialogActions {
+            send := DialogButton { caption: @tr("Join"); primary: true;
                 available: root.host != "" && root.network-name != "" && root.password != "";
                 invoked => { NetworkUi.login(root.host, root.network-name, root.password); } }
         }
     }
-    if !root.show-steps: Action {height:28px; caption:@tr("Create a network on my VPS");invoked=>{root.create-network();}}
-    if !root.show-steps && root.error != "": Label { text: root.error; wrap: word-wrap; color: #e99087; }
+    if !root.show-steps: DialogButton { caption: @tr("Create a network on my VPS"); invoked => { root.create-network(); } }
+    if !root.show-steps && root.error != "": DialogError { text: root.error; }
     if root.show-steps: VerticalLayout {
         spacing: 5px;
-        for title[index] in [@tr("Check network access"), @tr("Start the Uplink network service"), @tr("Confirm membership"), @tr("Get a virtual IP address")]: row := VerticalLayout {
-            private property <bool> current: index + 1 == NetworkUi.join-step;
-            private property <bool> failed: root.failed && self.current;
-            HorizontalLayout {
-                height: 25px; spacing: 8px;
-                Label { width: 18px; horizontal-alignment: center; text: row.failed ? "×" : index + 1 < NetworkUi.join-step ? "✓" : "" + (index + 1);
-                    font-weight: row.failed ? 700 : 400;
-                    color: row.failed ? #e99087 : index + 1 <= NetworkUi.join-step ? #bfec70 : #a7abb2; }
-                Label { text: title; font-weight: row.current ? 600 : 400; color: row.current ? #eff0f2 : #a7abb2; }
-            }
-            if row.failed: HorizontalLayout { padding-left: 26px;
-                Label { text: NetworkUi.join-failure; wrap: word-wrap; font-size: 12px; color: #e99087; }
-            }
+        for title[index] in [@tr("Check network access"), @tr("Start the Uplink network service"), @tr("Confirm membership"), @tr("Get a virtual IP address")]: DialogStep {
+            caption: title;
+            current: index + 1 == NetworkUi.join-step;
+            complete: index + 1 < NetworkUi.join-step;
+            failure: NetworkUi.join-failure;
         }
     }
-    if root.failed: HorizontalLayout { height: 32px; spacing: 8px; alignment: end;
-        Action { caption: @tr("Back"); invoked => { NetworkUi.join-failure = ""; } }
-        Action { caption: @tr("Retry"); primary: true; invoked => {
+    if root.failed: DialogActions {
+        DialogButton { caption: @tr("Back"); invoked => { NetworkUi.join-failure = ""; } }
+        DialogButton { caption: @tr("Retry"); primary: true; invoked => {
             if NetworkUi.credentials { NetworkUi.login(root.host, root.network-name, root.password); }
             else { root.submit(root.link); }
         } }

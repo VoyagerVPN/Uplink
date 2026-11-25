@@ -44,6 +44,9 @@ if ([IO.Directory]::Exists($requests)) {
 Remove-Empty $localData
 if ([IO.Directory]::Exists($profile)) {
     [IO.File]::Delete((Join-Path $profile 'updates.json'))
+    foreach ($log in 'last-join.log','transport.log','transport.previous.log','transport.log.lock','peer-ping.log','peer-ping.previous.log','peer-ping.log.lock') {
+        [IO.File]::Delete((Join-Path $profile $log))
+    }
     $updates=Join-Path $profile 'update-cache'
     Check-Path $updates
     if ([IO.Directory]::Exists($updates)) {

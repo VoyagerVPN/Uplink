@@ -1,5 +1,5 @@
 import { NetworkUi, Tab } from "network.slint";
-import { Label, Action, CopyFeedback, DialogFrame } from "controls.slint";
+import { Label, Action, CopyFeedback, DialogFrame, DialogActions, DialogButton, DialogError } from "controls.slint";
 import { TextField } from "text-field.slint";
 
 component CopyField inherits VerticalLayout {
@@ -11,22 +11,18 @@ component CopyField inherits VerticalLayout {
     Rectangle {
         HorizontalLayout{spacing:6px;
         TextField{text:root.value;readonly:true;field-name:root.title;}
-        Action{available:root.value!="";width:32px;height:32px;filled:true;icon-only:true;glyph:receipt.active?(receipt.success?@image-url("../assets/icon/check.svg"):@image-url("../assets/icon/copy-error.svg")):@image-url("../assets/icon/copy.svg");caption:@tr("Copy");invoked=>{receipt.show(NetworkUi.clipboard(root.value));}}
+        Action{available:root.value!="";width:32px;height:32px;icon-only:true;glyph:receipt.active?(receipt.success?@image-url("../assets/icon/check.svg"):@image-url("../assets/icon/copy-error.svg")):@image-url("../assets/icon/copy.svg");caption:@tr("Copy");invoked=>{receipt.show(NetworkUi.clipboard(root.value));}}
         }
         receipt:=CopyFeedback {}
     }
 }
 export component NetworkDialog inherits DialogFrame {
-    init => { self.focus(); }
+    private property <bool> confirming: NetworkUi.modal == "transfer" || NetworkUi.modal == "remove";
+    init => { if !root.confirming { self.focus(); } }
     dismiss => { NetworkUi.close-modal(); }
     card-width: NetworkUi.modal=="invite"?348px:NetworkUi.modal=="crop"?318px:325px;
-    HorizontalLayout{height:NetworkUi.modal=="invite"?41px:28px;spacing:4px;
-        VerticalLayout{
-            if NetworkUi.modal=="invite":Label{text:@tr("Invite to network");height:16px;font-size:12px;color:#a7abb2;}
-            Label{text:NetworkUi.modal=="crop"?@tr("Edit avatar"):NetworkUi.modal=="transfer"?@tr("Transfer ownership?"):NetworkUi.modal=="remove"?@tr("Remove member?"):NetworkUi.name;font-size:19px;font-weight:600;}
-        }
-        Action{width:28px;caption:"×";accessible-label:@tr("Close");title-button:true;invoked=>{NetworkUi.close-modal();}}
-    }
+    title: NetworkUi.modal=="crop"?@tr("Edit avatar"):NetworkUi.modal=="transfer"?@tr("Transfer ownership?"):NetworkUi.modal=="remove"?@tr("Remove member?"):NetworkUi.name;
+    eyebrow: NetworkUi.modal == "invite" ? @tr("Invite to network") : "";
     if NetworkUi.modal=="invite": VerticalLayout {spacing:12px;
         if (NetworkUi.link-on && NetworkUi.qr-on) || (NetworkUi.link-on && NetworkUi.password-on) || (NetworkUi.password-on && NetworkUi.qr-on):HorizontalLayout{height:28px;spacing:2px;
             if NetworkUi.link-on:Tab{title:@tr("Link");selected:NetworkUi.method=="link";choose=>{NetworkUi.method="link";}}
@@ -40,7 +36,8 @@ export component NetworkDialog inherits DialogFrame {
         if NetworkUi.method=="qr":Image{height:148px;source:NetworkUi.qr-image;image-fit:contain;image-rendering:pixelated;accessible-role:image;accessible-label:@tr("Network QR code");}
         if NetworkUi.method=="qr":Label{text:@tr("Scan to join");horizontal-alignment:center;height:22px;}
         if NetworkUi.method=="":Label{text:@tr("Invitations are disabled");height:32px;}
-        if NetworkUi.manages:HorizontalLayout{height:30px;alignment:end;Action{caption:@tr("Configure invitations");invoked=>{NetworkUi.close-modal();NetworkUi.panel="methods";}}}
+        if NetworkUi.error != "": DialogError { text: NetworkUi.error; }
+        if NetworkUi.manages:DialogActions { DialogButton { caption:@tr("Configure invitations"); invoked=>{NetworkUi.close-modal();NetworkUi.panel="methods";} } }
     }
     if NetworkUi.modal=="crop": VerticalLayout {spacing:12px;
         Rectangle {height:284px;background:#101114;border-radius:6px;clip:true;
@@ -62,18 +59,20 @@ export component NetworkDialog inherits DialogFrame {
                     moved=>{if self.pressed{NetworkUi.scale(1+2*(self.mouse-x - 7px)/(self.width - 14px));}}}
             }
         }
-        HorizontalLayout{height:32px;
-            Action{available:!NetworkUi.saving;caption:@tr("Replace photo");leading-icon:true;glyph:@image-url("../assets/icon/replace.svg");filled:true;invoked=>{NetworkUi.action("pick","");}}
+        if NetworkUi.error != "": DialogError { text: NetworkUi.error; }
+        DialogActions {
+            alignment: stretch;
+            DialogButton {available:!NetworkUi.saving;caption:@tr("Replace photo");leading-icon:true;glyph:@image-url("../assets/icon/replace.svg");invoked=>{NetworkUi.action("pick","");}}
             Rectangle{}
-            Action{available:!NetworkUi.saving;caption:@tr("Save");leading-icon:true;glyph:@image-url("../assets/icon/check.svg");primary:true;invoked=>{NetworkUi.action("save-avatar","");}}
+            DialogButton {available:!NetworkUi.saving;caption:@tr("Save");leading-icon:true;glyph:@image-url("../assets/icon/check.svg");primary:true;invoked=>{NetworkUi.action("save-avatar","");}}
         }
     }
-    if NetworkUi.modal=="transfer" || NetworkUi.modal=="remove": VerticalLayout{spacing:12px;
+    if root.confirming: VerticalLayout{spacing:12px;
         Label{text:NetworkUi.modal=="transfer"?@tr("{} will own the network “{}”. You will remain a member.",NetworkUi.target-name,NetworkUi.name):@tr("Remove {} from “{}”?",NetworkUi.target-name,NetworkUi.name);wrap:word-wrap;}
-        HorizontalLayout{height:32px;alignment:end;spacing:4px;
-            Action{caption:@tr("Cancel");invoked=>{NetworkUi.close-modal();}}
-            Action{caption:NetworkUi.modal=="transfer"?@tr("Transfer"):@tr("Remove");danger:true;invoked=>{NetworkUi.action(NetworkUi.modal,NetworkUi.target);}}
+        if NetworkUi.error != "": DialogError { text: NetworkUi.error; }
+        DialogActions {
+            DialogButton {caption:@tr("Cancel");initial-focus:true;initial-focus-visible:NetworkUi.confirmation-focus-visible;invoked=>{NetworkUi.close-modal();}}
+            DialogButton {caption:NetworkUi.modal=="transfer"?@tr("Transfer"):@tr("Remove");primary:true;danger:true;invoked=>{NetworkUi.action(NetworkUi.modal,NetworkUi.target);}}
         }
     }
-    if NetworkUi.error!="":Label{text:NetworkUi.error;height:32px;wrap:word-wrap;color:#e99087;font-size:12px;}
 }

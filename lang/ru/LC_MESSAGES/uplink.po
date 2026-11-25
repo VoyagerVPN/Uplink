@@ -63,6 +63,9 @@ msgstr "Uplink отключён"
 msgid "Network adapter unavailable"
 msgstr "Сетевой адаптер недоступен"
 
+msgid "Waiting for the network adapter…"
+msgstr "Ожидание сетевого адаптера…"
+
 msgid "Server connection is unstable"
 msgstr "Связь с сервером нестабильна"
 

@@ -1,4 +1,4 @@
-import { Label, ButtonFocus, Action, EditableTitle, HintCard } from "controls.slint";
+import { Label, ButtonFocus, Action, EditableTitle, HintCard, DialogTrigger } from "controls.slint";
 import { TextField } from "text-field.slint";
 import { ListView } from "std-widgets.slint";
 
@@ -7,6 +7,7 @@ export struct DropZone {x:float,y:float,w:float,h:float}
 export global NetworkUi {
     in-out property <string> panel;
     in-out property <string> modal;
+    in-out property <bool> confirmation-focus-visible;
     in-out property <string> name;
     in-out property <string> initials;
     in-out property <string> server;
@@ -108,29 +109,59 @@ component RosterRow inherits HorizontalLayout {
     }}
     if !root.person.own && !root.person.owner && (NetworkUi.owner || !root.person.admin): Rectangle {
         width:28px;
-        Action {width:28px;height:28px;icon-only:true;glyph:@image-url("../assets/icon/more.svg");caption:@tr("More actions");invoked=>{menu.show();}}
+        Action {
+            width:28px;height:28px;icon-only:true;glyph:@image-url("../assets/icon/more.svg");caption:@tr("More actions");
+            private property <bool> owns-confirmation: NetworkUi.target == root.person.ip && (NetworkUi.modal == "transfer" || NetworkUi.modal == "remove");
+            private property <bool> return-outline;
+            changed owns-confirmation => {
+                if self.owns-confirmation { self.return-outline = NetworkUi.confirmation-focus-visible; }
+                else { self.focus-default(self.return-outline); }
+            }
+            invoked => { menu.show(); }
+        }
         menu:=PopupWindow {
             close-policy:close-on-click-outside;
             x:parent.width - self.width;y:(parent.height+28px)/2+2px;width:165px;height:NetworkUi.owner?66px:36px;
             Rectangle{background:#25272b;border-width:1px;border-color:#43474b;border-radius:6px;
                 VerticalLayout{padding:3px;
-                    if NetworkUi.owner: Action{width:parent.width;align-start:true;caption:@tr("Transfer ownership");invoked=>{root.confirm("transfer");menu.close();}}
-                    Action{width:parent.width;align-start:true;danger:true;caption:@tr("Remove from network");invoked=>{root.confirm("remove");menu.close();}}
+                    if NetworkUi.owner: transfer := Action{width:parent.width;align-start:true;caption:@tr("Transfer ownership");invoked=>{root.confirm("transfer",transfer.keyboard-focus-visible);menu.close();}}
+                    remove := Action{width:parent.width;align-start:true;danger:true;caption:@tr("Remove from network");invoked=>{root.confirm("remove",remove.keyboard-focus-visible);menu.close();}}
                 }
             }
         }
     }
-    function confirm(kind:string){NetworkUi.target=root.person.ip;NetworkUi.target-name=root.person.name;NetworkUi.error="";NetworkUi.modal=kind;}
+    function confirm(kind:string, show-focus:bool) {
+        NetworkUi.target=root.person.ip;
+        NetworkUi.target-name=root.person.name;
+        NetworkUi.error="";
+        NetworkUi.confirmation-focus-visible=show-focus;
+        NetworkUi.modal=kind;
+    }
 }
 
 export component AvatarTile inherits ButtonFocus {
     in property <bool> empty-placeholder;
+    private property <bool> editor-open: NetworkUi.modal == "crop";
+    private property <bool> restore-focus;
+    private property <bool> return-outline;
+    function pick() {
+        root.return-outline = root.show-focus;
+        NetworkUi.action("pick", "");
+        root.restore-focus = root.editor-open;
+    }
+    changed editor-open => {
+        if !root.editor-open && root.restore-focus {
+            root.restore-focus = false;
+            if root.return-outline { root.focus(); }
+            else { root.focus-from-pointer(); }
+        }
+    }
     property <DropZone> bounds: {x:self.absolute-position.x/1px,y:self.absolute-position.y/1px,w:self.width/1px,h:self.height/1px};
     init=>{NetworkUi.drop-bounds=self.bounds;}
     changed bounds=>{NetworkUi.drop-bounds=self.bounds;}
     width:64px;height:84px;enabled:NetworkUi.avatar-editable && NetworkUi.manages;accessible-role:button;accessible-label:@tr("Change avatar");
-    accessible-action-default=>{NetworkUi.action("pick","");}
-    key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {NetworkUi.action("pick","");return accept;}return reject;}
+    accessible-action-default=>{root.pick();}
+    key-pressed(e)=>{if e.text==Key.Return || e.text==Key.Space {root.pick();return accept;}return reject;}
     Rectangle {y:0px;height:64px;border-radius:14px;clip:true;background:#2d3526;
         if !root.empty-placeholder && !NetworkUi.has-avatar: Label{text:NetworkUi.initials;font-size:22px;font-weight:600;color:#bfec70;horizontal-alignment:center;}
         if root.empty-placeholder && !NetworkUi.has-avatar: Image{width:20px;height:20px;source:@image-url("../assets/icon/add-network.svg");}
@@ -139,7 +170,7 @@ export component AvatarTile inherits ButtonFocus {
     }
     if NetworkUi.dragging-file: Image{x:-4px;y:-4px;width:72px;height:72px;source:@image-url("../assets/icon/drop-outline.svg");}
     if NetworkUi.avatar-editable: Label{y:68px;height:16px;width:parent.width;text:@tr("Change");font-size:12px;color:hit.has-hover || root.show-focus?#eff0f2:#a7abb2;horizontal-alignment:center;}
-    hit:=TouchArea{enabled:root.enabled;mouse-cursor:self.enabled?pointer:default;clicked=>{root.focus-from-pointer();NetworkUi.action("pick","");}}
+    hit:=TouchArea{enabled:root.enabled;mouse-cursor:self.enabled?pointer:default;clicked=>{root.focus-from-pointer();root.pick();}}
 }
 
 export component NetworkPage inherits VerticalLayout {
@@ -189,7 +220,13 @@ export component NetworkPage inherits VerticalLayout {
             }
         }
     }
-    if NetworkUi.panel=="methods": HorizontalLayout {height:32px;alignment:end;Action{caption:@tr("Open invitations");invoked=>{NetworkUi.open-invite();}}}
+    if NetworkUi.panel=="methods": HorizontalLayout {height:32px;alignment:end;
+        DialogTrigger {
+            caption: @tr("Open invitations");
+            dialog-open: NetworkUi.modal == "invite";
+            open-dialog => { NetworkUi.open-invite(); }
+        }
+    }
     if NetworkUi.panel=="people": Rectangle {height:min(350px,NetworkUi.people.length*38px+8px);border-radius:8px;background:#202225;
         ListView{x:12px;y:4px;width:parent.width - 24px;height:parent.height - 8px;for p in NetworkUi.people:RosterRow{person:p;}}
     }

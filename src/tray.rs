@@ -209,7 +209,7 @@ fn choose_icon() -> io::Result<HICON> {
     let options = crate::settings::options(&path)?;
     let light = light_taskbar();
     let id = match mode.as_str() {
-        _ if !options.enabled => 4,
+        _ if !options.enabled || options.health == "starting" => 4,
         _ if options.health == "critical" => 6,
         _ if options.health == "warning" => 5,
         "system" => {

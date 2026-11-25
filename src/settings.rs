@@ -1,7 +1,11 @@
 use serde_json::Value;
+pub(crate) mod diagnostics;
 pub(crate) mod join_log;
+mod membership_sessions;
 mod network;
 mod password;
+mod peer_poll;
+pub use peer_poll::run_peer_polls;
 pub use network::network_password;
 pub use network::{
     Policy, join_credentials, join_on_server, join_on_server_with_progress, network_action,
@@ -20,6 +24,12 @@ pub fn path() -> io::Result<PathBuf> {
 }
 
 fn read(path: &Path) -> io::Result<Value> {
+    let mut prefs = read_raw(path)?;
+    membership_sessions::Sessions::decrypt(&mut prefs)?;
+    Ok(prefs)
+}
+
+fn read_raw(path: &Path) -> io::Result<Value> {
     match fs::read(path) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(serde_json::json!({})),
@@ -160,21 +170,35 @@ pub fn rooms(path: &Path) -> io::Result<Vec<Room>> {
 }
 
 pub fn load(path: &Path) -> io::Result<bool> {
-    Ok(!saved_urls(&read(path)?)?.is_empty())
+    Ok(!saved_urls(&read_raw(path)?)?.is_empty())
 }
 
 pub fn refresh_transport(path: &Path) -> io::Result<bool> {
-    if !read(path)?["pending_power"].is_boolean() && !rooms(path)?.iter().any(|r| r.live.is_some())
+    let result = refresh_transport_with(path, crate::service_control::power);
+    if let Err(error) = &result {
+        diagnostics::failure(path, "refresh_transport", format_args!(""), error);
+    }
+    result
+}
+
+fn refresh_transport_with(
+    path: &Path,
+    service_power: impl FnOnce(bool) -> io::Result<()>,
+) -> io::Result<bool> {
+    if !read_raw(path)?["pending_power"].is_boolean() && !rooms(path)?.iter().any(|r| r.live.is_some())
     {
         return Ok(false);
     }
     let _guard = transport_lock(path)?;
     let mut changed = false;
-    if let Some(desired) = read(path)?["pending_power"].as_bool() {
-        apply_power(path, desired)?;
+    if let Some(desired) = read_raw(path)?["pending_power"].as_bool() {
+        if let PowerResult::Failed { changed, .. } = apply_power(path, desired, service_power)? {
+            return Ok(changed);
+        }
         changed = true;
     }
     let enabled = options(path)?.enabled;
+    let started = read_raw(path)?["adapter_started_at"].as_u64();
     let nick = nickname(path, &crate::peers::windows_name())?;
     for mut live in rooms(path)?.into_iter().filter_map(|room| room.live) {
         let key = live.key();
@@ -184,9 +208,11 @@ pub fn refresh_transport(path: &Path) -> io::Result<bool> {
         let adapter_available = !live.own_ip.is_empty();
         live.health = if !enabled {
             "ok"
+        } else if live.availability.membership_gone() {
+            "warning"
         } else if !adapter_available {
-            "critical"
-        } else if result.is_err() || live.own_ip.is_empty() || live.server_ms.is_none() {
+            missing_ip_health(started, unix_seconds())
+        } else if result.is_err() || live.server_ms.is_none() {
             "warning"
         } else {
             "ok"
@@ -200,13 +226,15 @@ pub fn refresh_transport(path: &Path) -> io::Result<bool> {
                 row.present = false;
             }
         }
-        let next = serde_json::to_value(live)?;
+        let mut next = serde_json::to_value(live)?;
+        peer_poll::retain_readings(&mut next, &before);
         if next != before {
             update(path, |prefs| {
                 if prefs["live"][&key]["session"] == before["session"]
                     && saved_urls(prefs)?.contains(&key.as_str())
                     && prefs["power"].as_bool().unwrap_or(true) == enabled
                 {
+                    peer_poll::retain_readings(&mut next, &prefs["live"][&key]);
                     prefs["live"][&key] = next;
                     changed = true;
                 }
@@ -240,7 +268,7 @@ fn store_urls(prefs: &mut Value, urls: Value) {
 }
 
 fn open_room(path: &Path, url: &str, allow_join: bool) -> io::Result<()> {
-    if !allow_join && read(path)?["live"][url].is_object() {
+    if !allow_join && read_raw(path)?["live"][url].is_object() {
         return update(path, |prefs| select_url(prefs, url, false));
     }
     let qr = url.trim().ends_with("?via=qr");
@@ -290,7 +318,7 @@ pub fn queue_invite(path: &Path, url: &str) -> io::Result<()> {
 }
 
 pub fn take_invite(path: &Path) -> io::Result<Option<String>> {
-    if read(path)?.get("launch_invites").is_none() {
+    if read_raw(path)?.get("launch_invites").is_none() {
         return Ok(None);
     }
     let mut next = None;
@@ -446,14 +474,16 @@ fn partial_network_failure_preserves_other_connections() {
 }
 
 pub fn options(path: &Path) -> io::Result<Options> {
-    let prefs = read(path)?;
+    let prefs = read_raw(path)?;
     let urls = saved_urls(&prefs)?;
     let mut live = urls
         .into_iter()
         .filter(|key| prefs["live"][*key].is_object())
         .map(|key| prefs["live"][key]["health"].as_str().unwrap_or("ok"))
         .peekable();
-    let health = if live.peek().is_some() {
+    let health = if prefs["power_failure_reported"] == true && prefs["pending_power"].is_boolean() {
+        "critical"
+    } else if live.peek().is_some() {
         connection_health(live)
     } else {
         prefs["demo_health"].as_str().unwrap_or("ok")
@@ -468,18 +498,22 @@ pub fn options(path: &Path) -> io::Result<Options> {
 
 fn connection_health<'a>(states: impl Iterator<Item = &'a str>) -> &'static str {
     let mut healthy = 0;
+    let mut starting = 0;
     let mut critical = 0;
     let mut warning = 0;
     for state in states {
         match state {
+            "starting" => starting += 1,
             "critical" => critical += 1,
             "warning" => warning += 1,
             _ => healthy += 1,
         }
     }
-    if critical > 0 && warning + healthy == 0 {
+    if starting > 0 && healthy + critical == 0 {
+        "starting"
+    } else if critical > 0 && warning + healthy + starting == 0 {
         "critical"
-    } else if warning + critical > 0 {
+    } else if warning + critical + starting > 0 {
         "warning"
     } else {
         "ok"
@@ -487,11 +521,6 @@ fn connection_health<'a>(states: impl Iterator<Item = &'a str>) -> &'static str 
 }
 
 pub fn set_option(path: &Path, key: &str, value: bool) -> io::Result<()> {
-    let _guard = if key == "power" {
-        Some(transport_lock(path)?)
-    } else {
-        None
-    };
     if key == "autostart" {
         return crate::startup::set(value);
     }
@@ -502,11 +531,10 @@ pub fn set_option(path: &Path, key: &str, value: bool) -> io::Result<()> {
         ));
     }
     if key == "power" {
-        update(path, |prefs| {
-            prefs["pending_power"] = Value::Bool(value);
-            Ok(())
-        })?;
-        return apply_power(path, value);
+        return match request_power(path, value, crate::service_control::power)? {
+            PowerResult::Applied => Ok(()),
+            PowerResult::Failed { error, .. } => Err(error),
+        };
     }
     update(path, |prefs| {
         prefs[key] = Value::Bool(value);
@@ -514,16 +542,61 @@ pub fn set_option(path: &Path, key: &str, value: bool) -> io::Result<()> {
     })
 }
 
-fn apply_power(path: &Path, value: bool) -> io::Result<()> {
+enum PowerResult {
+    Applied,
+    Failed { error: io::Error, changed: bool },
+}
+
+fn request_power(
+    path: &Path,
+    value: bool,
+    service_power: impl FnOnce(bool) -> io::Result<()>,
+) -> io::Result<PowerResult> {
+    let _guard = transport_lock(path)?;
+    update(path, |prefs| {
+        prefs["pending_power"] = Value::Bool(value);
+        prefs.as_object_mut().unwrap().remove("power_failure_reported");
+        Ok(())
+    })?;
+    apply_power(path, value, service_power)
+}
+
+// Отдельный результат команды сохраняет возможность повторить её после отказа службы.
+fn apply_power(
+    path: &Path,
+    value: bool,
+    service_power: impl FnOnce(bool) -> io::Result<()>,
+) -> io::Result<PowerResult> {
     let networks = rooms(path)?;
-    if networks.is_empty() || networks.iter().any(|room| room.live.is_some()) {
-        crate::service_control::power(value)?;
+    let previously_failed = read_raw(path)?["power_failure_reported"] == true;
+    let desired = if value { "on" } else { "off" };
+    if (networks.is_empty() || networks.iter().any(|room| room.live.is_some()))
+        && let Err(error) = service_power(value)
+    {
+        diagnostics::failure(path, "service_power", format_args!(" desired={desired}"), &error);
+        let changed = !previously_failed;
+        if changed {
+            update(path, |prefs| {
+                prefs["power_failure_reported"] = Value::Bool(true);
+                Ok(())
+            })?;
+        }
+        return Ok(PowerResult::Failed { error, changed });
     }
     update(path, |prefs| {
+        if value {
+            mark_adapter_start(prefs);
+        }
         prefs["power"] = Value::Bool(value);
-        prefs.as_object_mut().unwrap().remove("pending_power");
+        let prefs = prefs.as_object_mut().unwrap();
+        prefs.remove("pending_power");
+        prefs.remove("power_failure_reported");
         Ok(())
-    })
+    })?;
+    if previously_failed {
+        diagnostics::record(path, format_args!("operation=service_power desired={desired} result=recovered"));
+    }
+    Ok(PowerResult::Applied)
 }
 
 pub fn set_demo_health(path: &Path, health: &str) -> io::Result<()> {
@@ -537,14 +610,74 @@ pub fn set_demo_health(path: &Path, health: &str) -> io::Result<()> {
 }
 
 pub fn start_session(path: &Path) -> io::Result<()> {
-    if !options(path)?.autoconnect {
-        set_option(path, "power", false)?;
+    let result = start_session_with(path, crate::service_control::power);
+    if let Err(error) = &result {
+        diagnostics::failure(path, "prepare_session", format_args!(""), error);
+    }
+    result
+}
+
+fn start_session_with(
+    path: &Path,
+    service_power: impl FnOnce(bool) -> io::Result<()>,
+) -> io::Result<()> {
+    if membership_sessions::needs_migration(&read_raw(path)?) {
+        update(path, |_| Ok(()))?;
+    }
+    let options = options(path)?;
+    if !options.autoconnect {
+        // Отказ службы виден в интерфейсе, фоновая синхронизация продолжит попытки.
+        request_power(path, false, service_power)?;
+    } else if options.enabled && read_raw(path)?["live"].is_object() {
+        update(path, |prefs| {
+            if prefs["power"].as_bool() == Some(false) || prefs["pending_power"].is_boolean() {
+                return Ok(());
+            }
+            if saved_urls(prefs)?.into_iter().any(|url| {
+                let membership = &prefs["live"][url];
+                membership.is_object()
+                    && !matches!(membership["availability"].as_str(), Some("deleted" | "denied"))
+            }) {
+                // Фоновая синхронизация запустит службу перед первым обновлением сети.
+                prefs["pending_power"] = Value::Bool(true);
+                mark_adapter_start(prefs);
+            }
+            Ok(())
+        })?;
     }
     Ok(())
 }
 
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn missing_ip_health(started: Option<u64>, now: u64) -> &'static str {
+    if started.and_then(|start| now.checked_sub(start)).is_some_and(|age| age < 30) {
+        "starting"
+    } else {
+        "critical"
+    }
+}
+
+fn mark_adapter_start(prefs: &mut Value) {
+    if let Some(live) = prefs.get_mut("live").and_then(Value::as_object_mut) {
+        for network in live.values_mut() {
+            if matches!(network["availability"].as_str(), Some("denied" | "deleted")) {
+                network["health"] = "warning".into();
+            } else if network["health"] == "critical" {
+                network["health"] = "starting".into();
+            }
+        }
+        prefs["adapter_started_at"] = unix_seconds().into();
+    }
+}
+
 pub fn nickname(path: &Path, fallback: &str) -> io::Result<String> {
-    Ok(read(path)?["nickname"]
+    Ok(read_raw(path)?["nickname"]
         .as_str()
         .unwrap_or(fallback)
         .to_owned())
@@ -623,7 +756,7 @@ pub fn rename_selected(path: &Path, expected: Option<&str>, name: &str) -> io::R
 }
 
 pub fn tray_mode(path: &Path) -> io::Result<String> {
-    Ok(read(path)?["tray_icon"].as_str().unwrap_or("green").into())
+    Ok(read_raw(path)?["tray_icon"].as_str().unwrap_or("green").into())
 }
 
 pub fn save_tray_mode(path: &Path, mode: &str) -> io::Result<()> {
@@ -637,7 +770,7 @@ pub fn save_tray_mode(path: &Path, mode: &str) -> io::Result<()> {
 }
 
 pub fn language(path: &Path) -> io::Result<String> {
-    let prefs = read(path)?;
+    let prefs = read_raw(path)?;
     Ok(prefs["language"]
         .as_str()
         .filter(|v| crate::i18n::supports(v))
@@ -674,11 +807,13 @@ fn update(path: &Path, change: impl FnOnce(&mut Value) -> io::Result<()>) -> io:
         .write(true)
         .open(dir.join("prefs.lock"))?;
     lock.lock()?;
-    let mut value = read(path)?;
+    let mut value = read_raw(path)?;
     if !value.is_object() {
         return Err(io::Error::other("Invalid settings"));
     }
+    let sessions = membership_sessions::Sessions::decrypt(&mut value)?;
     change(&mut value)?;
+    sessions.encrypt(&mut value)?;
 
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
     serde_json::to_writer(&mut file, &value)?;
@@ -690,6 +825,193 @@ fn update(path: &Path, change: impl FnOnce(&mut Value) -> io::Result<()>) -> io:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_poll_recovers_after_timeout_and_records_both_attempts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        let url = "uplink://example.org/networks/1234";
+        let network = serde_json::json!({"host":"example.org","id":"1234","name":"Test","node":"me",
+            "session":"private-secret","own_ip":"10.1.2.3","rows":[
+                {"node":"me","nick":"A","ip":"10.1.2.3","present":true,"ping_ms":37},
+                {"node":"other","nick":"B","ip":"10.1.2.4","present":false}]});
+        fs::write(&path, serde_json::json!({"rooms":[url],"live":{(url):network}}).to_string()).unwrap();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        assert!(peer_poll::poll_with(&path, |_, _| {
+            if calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+                Err(crate::transport::PingError::Send(11010))
+            } else { Ok(27) }
+        }).unwrap());
+        let rows = &read(&path).unwrap()["live"][url]["rows"];
+        assert_eq!(rows[0]["ping_ms"], 37);
+        assert_eq!(rows[1]["ping_ms"], 27);
+        let log = fs::read_to_string(dir.path().join("peer-ping.log")).unwrap();
+        assert!(log.contains("attempt=1") && log.contains("timeout") && log.contains("11010"));
+        assert!(log.contains("attempt=2") && log.contains("rtt_ms=27"));
+        assert!(!log.contains("private-secret"));
+        assert!(rooms(&path).unwrap()[0].participants("A")[1].online);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        assert!(peer_poll::poll_with(&path, |_, _| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(crate::transport::PingError::Status(11010))
+        }).unwrap());
+        assert_eq!(calls.into_inner(), 2);
+        assert!(read(&path).unwrap()["live"][url]["rows"][1]["ping_ms"].is_null());
+        assert!(!rooms(&path).unwrap()[0].participants("A")[1].online);
+    }
+
+    #[test]
+    fn restarting_with_a_saved_network_queues_service_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        fs::write(&path, r#"{"rooms":["local"],"live":{"local":{"health":"critical"}}}"#).unwrap();
+        start_session(&path).unwrap();
+        assert_eq!(read(&path).unwrap()["pending_power"].as_bool(), Some(true));
+        assert_eq!(options(&path).unwrap().health, "starting");
+        assert_eq!(missing_ip_health(Some(100), 129), "starting");
+        assert_eq!(missing_ip_health(Some(100), 130), "critical");
+        assert_eq!(missing_ip_health(None, 129), "critical");
+    }
+
+    #[test]
+    fn startup_service_failure_reaches_the_ui_and_keeps_the_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        let url = "uplink://example.org/networks/1234";
+        let live = serde_json::json!({"host":"example.org","id":"1234","node":"me",
+            "name":"Test","session":"private-token","health":"critical"});
+        fs::write(&path, serde_json::json!({"rooms":[url],"live":{(url):live}}).to_string()).unwrap();
+        start_session(&path).unwrap();
+        assert_eq!(options(&path).unwrap().health, "starting");
+
+        let deny = |enabled: bool| {
+            assert!(enabled);
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "private-service-detail"))
+        };
+        assert!(refresh_transport_with(&path, deny).unwrap());
+        assert_eq!(options(&path).unwrap().health, "critical");
+        assert_eq!(read(&path).unwrap()["pending_power"], true);
+        assert!(!refresh_transport_with(&path, deny).unwrap());
+
+        let log = fs::read_to_string(dir.path().join("transport.log")).unwrap();
+        assert!(log.contains("operation=service_power desired=on result=failed kind=PermissionDenied"));
+        assert!(!log.contains("private-"));
+    }
+
+    #[test]
+    fn a_service_retry_that_succeeds_clears_the_error_while_preserving_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        save_nickname(&path, "Mira").unwrap();
+        set_option(&path, "autoconnect", false).unwrap();
+        start_session_with(&path, |enabled| {
+            assert!(!enabled);
+            Err(io::Error::from_raw_os_error(5))
+        }).unwrap();
+        let prefs = options(&path).unwrap();
+        assert!(prefs.enabled);
+        assert_eq!(prefs.health, "critical");
+        assert!(refresh_transport_with(&path, |enabled| {
+            assert!(!enabled);
+            Ok(())
+        }).unwrap());
+        let prefs = options(&path).unwrap();
+        assert!(!prefs.enabled);
+        assert_eq!(prefs.health, "ok");
+        assert_eq!(nickname(&path, "").unwrap(), "Mira");
+        let log = fs::read_to_string(dir.path().join("transport.log")).unwrap();
+        assert!(log.contains("operation=service_power desired=off result=failed kind=PermissionDenied win32=5"));
+        assert!(log.contains("operation=service_power desired=off result=recovered"));
+    }
+
+    #[test]
+    fn legacy_membership_session_is_protected_on_startup_and_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        let url = "uplink://example.org/networks/1234";
+        let live = serde_json::json!({"host":"example.org","id":"1234","node":"me",
+            "name":"Test","session":"private-membership-token"});
+        let prefs = serde_json::json!({"power":false,"rooms":[url],"live":{(url):live}});
+        fs::write(&path, prefs.to_string()).unwrap();
+
+        start_session(&path).unwrap();
+        let stored = fs::read_to_string(&path).unwrap();
+        assert!(!stored.contains("private-membership-token"));
+        assert_eq!(rooms(&path).unwrap()[0].live.as_ref().unwrap().session, "private-membership-token");
+
+        save_nickname(&path, "Mira").unwrap();
+        let before: Value = serde_json::from_str(&stored).unwrap();
+        let after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(before["live"][url], after["live"][url]);
+        assert_eq!(rooms(&path).unwrap()[0].live.as_ref().unwrap().session, "private-membership-token");
+    }
+
+    #[test]
+    fn upgrade_protects_incomplete_joins_and_keeps_the_legacy_room_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        let url = "uplink://example.org/networks/1234";
+        let member = serde_json::json!({"host":"example.org","id":"1234","node":"me",
+            "name":"Test","session":"private-saved-token"});
+        let mut pending = member.clone();
+        pending["session"] = "private-pending-token".into();
+        let prefs = serde_json::json!({"power":false,"rooms":[url],
+            "live":{(url):member},"pending":{(url):pending}});
+        fs::write(&path, prefs.to_string()).unwrap();
+
+        start_session(&path).unwrap();
+        let stored = fs::read_to_string(&path).unwrap();
+        assert!(!stored.contains("private-"));
+        let disk: Value = serde_json::from_str(&stored).unwrap();
+        let old: crate::transport::Membership = serde_json::from_value(disk["live"][url].clone()).unwrap();
+        assert_eq!(old.key(), url);
+        assert!(old.session.is_empty());
+        assert_eq!(read(&path).unwrap()["pending"][url]["session"], "private-pending-token");
+    }
+
+    #[test]
+    fn a_copied_membership_envelope_is_not_accepted_for_another_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        let source = "uplink://example.org/networks/1234";
+        let target = "uplink://example.org/networks/4321";
+        let live = serde_json::json!({"host":"example.org","id":"1234","node":"me",
+            "name":"Test","session":"original-token"});
+        let mut prefs = serde_json::json!({"power":false,"rooms":[source],"live":{(source):live}});
+        fs::write(&path, prefs.to_string()).unwrap();
+        start_session(&path).unwrap();
+
+        prefs = read_raw(&path).unwrap();
+        let mut copy = prefs["live"][source].clone();
+        copy["id"] = "4321".into();
+        prefs["live"][target] = copy;
+        prefs["rooms"] = serde_json::json!([source, target]);
+        let bytes = serde_json::to_vec(&prefs).unwrap();
+        fs::write(&path, &bytes).unwrap();
+
+        assert!(rooms(&path).is_err());
+        assert!(save_nickname(&path, "Mira").is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn restarting_only_queues_service_start_for_enabled_saved_memberships() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        for fixture in [
+            r#"{"power":false,"rooms":["local"],"live":{"local":{}}}"#,
+            r#"{"rooms":[],"live":{"local":{}}}"#,
+            r#"{"rooms":["local"],"live":{"local":{"availability":"deleted"}}}"#,
+            r#"{"rooms":["local"],"live":{"local":{"availability":"denied"}}}"#,
+        ] {
+            fs::write(&path, fixture).unwrap();
+            start_session(&path).unwrap();
+            assert!(read(&path).unwrap()["pending_power"].is_null(), "{fixture}");
+        }
+        fs::write(&path, r#"{"pending_power":false,"rooms":["local"],"live":{"local":{}}}"#).unwrap();
+        start_session(&path).unwrap();
+        assert_eq!(read(&path).unwrap()["pending_power"].as_bool(), Some(false));
+    }
 
     #[test]
     fn external_invitations_are_validated_deduplicated_and_taken_once_in_order() {

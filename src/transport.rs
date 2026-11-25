@@ -101,6 +101,17 @@ thread_local! {
 }
 
 fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> {
+    request_with_diagnostics(host, endpoint, body, None)
+}
+
+fn request_with_diagnostics(
+    host: &str,
+    endpoint: &str,
+    body: Value,
+    background: Option<(&std::path::Path, &'static str)>,
+) -> io::Result<(Value, u32)> {
+    use crate::settings::diagnostics;
+
     join_log::operation(match endpoint {
         "login" => "http_login",
         "bootstrap" => "http_bootstrap",
@@ -119,13 +130,18 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
             result
         })
         .map_err(|err| {
-            join_log::number("curl_code", err.code().into());
-            io::Error::new(io::ErrorKind::NotConnected, "Could not reach Uplink over HTTPS")
+            let code = err.code();
+            join_log::number("curl_code", code.into());
+            let error = io::Error::new(io::ErrorKind::NotConnected, "Could not reach Uplink over HTTPS");
+            if let Some((prefs, operation)) = background {
+                diagnostics::failure(prefs, operation, format_args!(" curl_code={code}"), &error);
+            }
+            error
         })?;
     join_log::number("http_status", status.into());
 
-    match status {
-        200 => Ok((parse_reply(&response)?, latency)),
+    let result = match status {
+        200 => parse_reply(&response).map(|reply| (reply, latency)),
         410 if endpoint == "sync" && serde_json::from_slice::<Value>(&response)
             .is_ok_and(|v| v["error"] == "Network deleted") =>
         {
@@ -167,7 +183,11 @@ fn request(host: &str, endpoint: &str, body: Value) -> io::Result<(Value, u32)> 
             ))
         }
         _ => Err(io::Error::other("Uplink API unavailable")),
+    };
+    if let (Some((prefs, operation)), Err(error)) = (background, &result) {
+        diagnostics::failure(prefs, operation, format_args!(" http_status={status}"), error);
     }
+    result
 }
 
 fn send_https(
@@ -316,16 +336,45 @@ fn assigned_ipv4(net: &Value) -> Option<std::net::Ipv4Addr> {
         .iter()
         .find_map(|address| address.as_str()?.split_once('/')?.0.parse().ok())
 }
-fn peer_ping(source: &str, destination: &str) -> Option<u32> {
+pub(crate) enum PingError {
+    Address,
+    Open(u32),
+    Send(u32),
+    Status(u32),
+    UnexpectedResponder(std::net::Ipv4Addr),
+}
+
+impl PingError {
+    pub(crate) fn timeout(&self) -> bool {
+        matches!(self, Self::Send(11010 | 1460) | Self::Status(11010))
+    }
+}
+
+impl std::fmt::Display for PingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = if self.timeout() { "timeout" } else { "error" };
+        match self {
+            Self::Address => write!(f, "result=skipped reason=invalid_address"),
+            Self::Open(code) => write!(f, "result=error operation=open win32={code}"),
+            Self::Send(code) => write!(f, "result={kind} operation=send win32={code}"),
+            Self::Status(code) => write!(f, "result={kind} operation=reply ip_status={code}"),
+            Self::UnexpectedResponder(ip) => write!(f, "result=error reason=unexpected_responder responder={ip}"),
+        }
+    }
+}
+
+pub(crate) const ECHO_TIMEOUT_MS: u32 = 600;
+
+pub(crate) fn peer_ping(source: &str, destination: &str) -> Result<u32, PingError> {
     use std::{net::Ipv4Addr, ptr};
     use windows_sys::Win32::{Foundation::INVALID_HANDLE_VALUE, NetworkManagement::IpHelper::*};
-    let source = source.parse::<Ipv4Addr>().ok()?;
-    let target = destination.parse::<Ipv4Addr>().ok()?;
+    let source = source.parse::<Ipv4Addr>().map_err(|_| PingError::Address)?;
+    let target = destination.parse::<Ipv4Addr>().map_err(|_| PingError::Address)?;
     if !source.is_private()
         || source.octets()[..3] != target.octets()[..3]
         || matches!(target.octets()[3], 0 | 255)
     {
-        return None;
+        return Err(PingError::Address);
     }
     let payload = b"Uplink";
     let mut buffer = [0usize; 16];
@@ -333,7 +382,7 @@ fn peer_ping(source: &str, destination: &str) -> Option<u32> {
     unsafe {
         let handle = IcmpCreateFile();
         if handle == INVALID_HANDLE_VALUE {
-            return None;
+            return Err(PingError::Open(windows_sys::Win32::Foundation::GetLastError()));
         }
         let received = IcmpSendEcho2Ex(
             handle,
@@ -347,15 +396,22 @@ fn peer_ping(source: &str, destination: &str) -> Option<u32> {
             ptr::null(),
             buffer.as_mut_ptr().cast(),
             size_of_val(&buffer) as u32,
-            600,
+            ECHO_TIMEOUT_MS,
         );
+        let error = (received == 0).then(|| windows_sys::Win32::Foundation::GetLastError());
         IcmpCloseHandle(handle);
-        if received == 0 {
-            return None;
+        if let Some(code) = error {
+            return Err(PingError::Send(code));
         }
         let reply = &*buffer.as_ptr().cast::<ICMP_ECHO_REPLY>();
-        (reply.Status == 0 && reply.Address == u32::from_ne_bytes(target.octets()))
-            .then_some(reply.RoundTripTime)
+        let responder = Ipv4Addr::from(reply.Address.to_ne_bytes());
+        if reply.Status != 0 {
+            Err(PingError::Status(reply.Status))
+        } else if responder != target {
+            Err(PingError::UnexpectedResponder(responder))
+        } else {
+            Ok(reply.RoundTripTime)
+        }
     }
 }
 
@@ -437,10 +493,13 @@ impl Membership {
         prefs: &std::path::Path,
         read_interface: impl FnOnce(&str) -> io::Result<Option<Value>>,
     ) -> io::Result<()> {
+        use crate::settings::diagnostics;
+
         let sync =
             json!({"session":self.session,"network":self.id,"nick":nick,"avatar_revision":self.known_avatar(prefs),
                 "credential_expires_at":self.credential_expires_at});
-        let snapshot = post(&self.host, "sync", sync);
+        let snapshot = request_with_diagnostics(&self.host, "sync", sync, Some((prefs, "sync_membership")))
+            .map(|(data, _)| data);
         let renewal = match &snapshot {
             Ok(data) if data["id"] == self.id => data.get("transport_profile")
                 .map(|grant| self.install_grant(grant)).transpose(),
@@ -453,13 +512,12 @@ impl Membership {
             }
             _ => Ok(()),
         };
-        let ms = if snapshot.is_ok() {
-            request(&self.host, "ping", json!({}))
+        let sync_ok = snapshot.is_ok();
+        let ms = sync_ok.then(|| {
+            request_with_diagnostics(&self.host, "ping", json!({}), Some((prefs, "server_ping")))
                 .ok()
                 .map(|(_, ms)| ms)
-        } else {
-            None
-        };
+        }).flatten();
         let net = read_interface(self.assigned_ip.as_deref().unwrap_or(""));
         let status = self.update_status(
             net.as_ref()
@@ -468,7 +526,6 @@ impl Membership {
                 .unwrap_or(&Value::Null),
             snapshot,
             ms,
-            peer_ping,
         );
         if net.is_err() {
             self.server_ms = None;
@@ -477,7 +534,21 @@ impl Membership {
                 member.present = false;
             }
         }
-        status.and(renewal.map(|_| ())).and(net.map(|_| ())).and(avatar_status)
+        let renewal = renewal.map(|_| ());
+        let net = net.map(|_| ());
+        if sync_ok && let Err(error) = &status {
+            diagnostics::failure(prefs, "apply_membership_snapshot", format_args!(""), error);
+        }
+        for (operation, result) in [
+            ("renew_transport_credential", &renewal),
+            ("query_adapter_ip", &net),
+            ("sync_network_avatar", &avatar_status),
+        ] {
+            if let Err(error) = result {
+                diagnostics::failure(prefs, operation, format_args!(""), error);
+            }
+        }
+        status.and(renewal).and(net).and(avatar_status)
     }
 
     fn update_status(
@@ -485,7 +556,6 @@ impl Membership {
         net: &Value,
         snapshot: io::Result<Value>,
         ms: Option<u32>,
-        probe: fn(&str, &str) -> Option<u32>,
     ) -> io::Result<()> {
         self.availability = match &snapshot {
             Ok(data) if data["id"] == self.id => Availability::Available,
@@ -519,20 +589,8 @@ impl Membership {
                 row.present = false;
             }
         }
-        for group in self.rows.chunks_mut(8) {
-            thread::scope(|scope| {
-                for row in group {
-                    if row.node == self.node {
-                        row.ping_ms = self.server_ms;
-                    } else {
-                        let source = &self.own_ip;
-                        scope.spawn(move || {
-                            row.ping_ms = probe(source, &row.ip);
-                            row.present |= row.ping_ms.is_some();
-                        });
-                    }
-                }
-            });
+        for row in &mut self.rows {
+            row.ping_ms = if row.node == self.node { self.server_ms } else { None };
         }
         snapshot.map(|_| ())
     }
@@ -607,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn https_outage_keeps_adapter_ip_and_rechecks_cached_peers() {
+    fn https_outage_keeps_adapter_ip_and_cached_peers_for_independent_probes() {
         let mut m: Membership = serde_json::from_value(json!({
             "host":"example.org","id":"1234","session":"s","node":"me","name":"A","server_ms":20,
             "rows":[{"node":"peer","nick":"Peer","ip":"10.3.4.6","present":false},
@@ -620,24 +678,17 @@ mod tests {
                 &net,
                 Err(io::Error::other("timeout")),
                 None,
-                |source, target| {
-                    assert_eq!(source, "10.3.4.5");
-                    (target == "10.3.4.6").then_some(7)
-                }
             )
             .is_err()
         );
         assert_eq!(m.own_ip, "10.3.4.5");
         assert_eq!(m.server_ms, None);
-        assert!(m.rows[0].present && !m.rows[1].present);
-        assert_eq!(m.rows[0].ping_ms, Some(7));
-        assert_eq!(m.rows[1].ping_ms, None);
+        assert_eq!(m.rows.len(), 2);
         assert!(
             m.update_status(
                 &net,
                 Err(io::ErrorKind::PermissionDenied.into()),
                 None,
-                |_, _| panic!()
             )
             .is_err()
         );
@@ -653,11 +704,11 @@ mod tests {
             (io::ErrorKind::PermissionDenied, "Invalid session", "denied"),
             (io::ErrorKind::NotFound, "Network deleted", "deleted"),
         ] {
-            assert!(m.update_status(&Value::Null, Err(io::Error::new(kind, reason)), None, |_, _| panic!()).is_err());
+            assert!(m.update_status(&Value::Null, Err(io::Error::new(kind, reason)), None).is_err());
             assert_eq!(serde_json::to_value(&m).unwrap()["availability"], expected);
             assert_eq!(m.name, "Friday");
         }
-        m.update_status(&Value::Null, Ok(json!({"id":"1234","name":"Friday","members":[],"methods":null})), Some(12), |_, _| panic!()).unwrap();
+        m.update_status(&Value::Null, Ok(json!({"id":"1234","name":"Friday","members":[],"methods":null})), Some(12)).unwrap();
         assert_eq!(serde_json::to_value(&m).unwrap()["availability"], "available");
     }
 

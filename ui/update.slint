@@ -1,7 +1,7 @@
-import { Label, HintCard, Action, ButtonFocus, ProgressRing } from "controls.slint";
+import { Label, HintCard, ButtonFocus, ProgressRing, DialogFrame, DialogActions, DialogButton, DialogScroll, DialogTrigger } from "controls.slint";
 
 export enum UpdatePhase { idle, checking, current, found, loading, verifying, ready, restarting, updated, offline, invalid, install-failed }
-export struct ReleaseNote { text: string, heading: bool, bullet: bool }
+export struct ReleaseNote { text: string, heading: bool, bullet: bool, new-entry: bool }
 export global UpdateUi {
     in-out property <UpdatePhase> phase;
     in-out property <string> version;
@@ -62,7 +62,23 @@ export component UpdateHeader inherits HorizontalLayout {
         accessible-label: UpdateUi.readable ? UpdateUi.title : UpdateUi.phase == UpdatePhase.current ? @tr("Up to date. Check again") :
             UpdateUi.phase == UpdatePhase.updated ? @tr("Update installed. Check again") : @tr("Check for updates");
         enabled: root.simple || UpdateUi.readable;
-        function activate() { if UpdateUi.readable { UpdateUi.dialog-open = true; } else if root.simple { UpdateUi.check(); } }
+        private property <bool> notes-open: UpdateUi.dialog-open;
+        private property <bool> restore-focus;
+        private property <bool> return-outline;
+        function activate() {
+            if UpdateUi.readable {
+                self.restore-focus = true;
+                self.return-outline = self.show-focus;
+                UpdateUi.dialog-open = true;
+            } else if root.simple { UpdateUi.check(); }
+        }
+        changed notes-open => {
+            if !self.notes-open && self.restore-focus {
+                self.restore-focus = false;
+                if self.return-outline { self.focus(); }
+                else { self.focus-from-pointer(); }
+            }
+        }
         accessible-action-default => { self.activate(); }
         key-pressed(e) => { if e.text == Key.Return || e.text == Key.Space { self.activate(); return accept; } return reject; }
         word := Label { text: "v" + UpdateUi.version; font-size: 11px; letter-spacing: 0.45px; color: hit.has-hover || version.show-focus ? #eff0f2 : #90959c; }
@@ -77,85 +93,45 @@ export component UpdateHeader inherits HorizontalLayout {
                 accessible-role: image; accessible-label: UpdateUi.hint;
                 Tooltip { HintCard { message: UpdateUi.hint; } }
             }
-            if !UpdateUi.busy && UpdateUi.phase != UpdatePhase.loading: Action {
+            if !UpdateUi.busy && UpdateUi.phase != UpdatePhase.loading: DialogTrigger {
                 width: 24px; height: 28px; icon-only: true; caption: UpdateUi.hint;
                 if UpdateUi.phase == UpdatePhase.ready: Image { width: 18px; height: 18px; source: @image-url("../assets/icon/install-update.svg"); }
                 if UpdateUi.phase != UpdatePhase.ready: Ring {}
-                invoked => { UpdateUi.act(); }
+                dialog-open: UpdateUi.dialog-open;
+                open-dialog => { UpdateUi.act(); }
             }
         }
     }
 }
 
-component ReleaseNotes inherits Rectangle {
-    clip: true;
-    preferred-height: min(260px, items.preferred-height);
-    height: self.preferred-height;
-    property <length> overflow: max(0px, view.content-height - view.height);
-    function scroll-to(offset: length) {
-        view.content-y = -clamp(offset, 0px, root.overflow);
-    }
-    view := Flickable {
-        x: 0; width: parent.width - 16px; height: parent.height;
-        content-width: self.width;
-        content-height: items.preferred-height;
-        items := VerticalLayout {
-            width: view.width; height: self.preferred-height; spacing: 8px;
-            for note in UpdateUi.notes: HorizontalLayout { spacing: 6px;
-                if note.bullet: Label { width: 10px; text: "•"; color: #92999f; vertical-alignment: top; }
-                Text { horizontal-stretch: 1; text: note.text; wrap: word-wrap; font-size: 13px; font-weight: note.heading ? 600 : 400; color: note.heading ? #eff0f2 : #d0d3d7; }
+component ReleaseNotes inherits DialogScroll {
+    for note in UpdateUi.notes: HorizontalLayout { spacing: 6px;
+        if note.bullet: Label { width: 10px; text: "•"; color: #92999f; vertical-alignment: top; }
+        Text {
+            horizontal-stretch: 1; text: note.new-entry ? "\u{2003}" + note.text : note.text;
+            wrap: word-wrap; font-size: 13px; font-weight: note.heading ? 600 : 400; color: note.heading ? #eff0f2 : #d0d3d7;
+            if note.new-entry: Path {
+                x: 0; y: 3px; width: 10px; height: 10px;
+                viewbox-width: 16; viewbox-height: 16; fill: #d0d3d7;
+                commands: "M8 0 Q9 7 16 8 Q9 9 8 16 Q7 9 0 8 Q7 7 8 0 Z";
             }
-        }
-    }
-    if root.overflow > 0px: track := TouchArea {
-        x: parent.width - self.width; width: 12px; height: parent.height;
-        property <length> grab-offset;
-        property <length> travel: self.height - thumb.height;
-        function seek(y: length) {
-            root.scroll-to((y - self.grab-offset) / max(1px, self.travel) * root.overflow);
-        }
-        pointer-event(e) => {
-            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
-                self.grab-offset = self.mouse-y >= thumb.y && self.mouse-y <= thumb.y + thumb.height
-                    ? self.mouse-y - thumb.y : thumb.height / 2;
-                self.seek(self.mouse-y);
-            }
-        }
-        moved => { if self.pressed { self.seek(self.mouse-y); } }
-        scroll-event(e) => { root.scroll-to(-view.content-y - e.delta-y); return accept; }
-        thumb := Rectangle {
-            width: 4px; height: clamp(track.height * (view.height / view.content-height), 24px, track.height);
-            y: track.travel * clamp(-view.content-y / max(1px, root.overflow), 0, 1);
-            border-radius: 2px;
-            background: track.pressed ? #bfec70 : track.has-hover ? #949aa2 : #686e76;
         }
     }
 }
 
-export component UpdateDialog inherits FocusScope {
-    accessible-role: groupbox;
-    accessible-label: UpdateUi.title;
+export component UpdateDialog inherits DialogFrame {
+    title: UpdateUi.title;
     init => { self.focus(); }
-    key-pressed(e) => { if e.text == Key.Escape { UpdateUi.dialog-open = false; return accept; } return reject; }
-    Rectangle { background: #090b0dad; TouchArea { clicked => { UpdateUi.dialog-open = false; } } }
-    Rectangle {
-        width: 340px; height: content.preferred-height; border-radius: 10px; border-color: #383b40; border-width: 1px; background: #202225;
-        TouchArea {}
-        content := VerticalLayout { padding: 18px; spacing: 16px;
-            HorizontalLayout { height: 28px; spacing: 8px;
-                Label { text: UpdateUi.title; font-size: 19px; font-weight: 600; horizontal-stretch: 1; }
-                Action { width: 28px; height: 28px; title-button: true; caption: "×"; accessible-label: @tr("Close"); invoked => { UpdateUi.dialog-open = false; } }
-            }
-            if !UpdateUi.readable: Label { text: UpdateUi.hint; height: 28px; color: #b9bdc3; }
-            if UpdateUi.readable: ReleaseNotes {}
-            if UpdateUi.readable: HorizontalLayout { height: 32px; alignment: end;
-                Action { primary: true; height: 32px;
-                    available: UpdateUi.phase == UpdatePhase.ready || UpdateUi.phase == UpdatePhase.found;
-                    caption: UpdateUi.phase == UpdatePhase.ready ? @tr("Install and restart") : UpdateUi.phase == UpdatePhase.found ? @tr("Download update") :
-                        UpdateUi.phase == UpdatePhase.loading ? @tr("Downloading…") : @tr("Verifying package…");
-                    invoked => { UpdateUi.dialog-open = false; if UpdateUi.phase == UpdatePhase.ready { UpdateUi.install(); } else { UpdateUi.download(); } }
-                }
-            }
+    dismiss => { UpdateUi.dialog-open = false; }
+    if !UpdateUi.readable: Label { text: UpdateUi.hint; wrap: word-wrap; color: #a7abb2; }
+    if UpdateUi.readable: ReleaseNotes {}
+    if UpdateUi.readable: DialogActions {
+        DialogButton {
+            primary: true;
+            available: UpdateUi.phase == UpdatePhase.ready || UpdateUi.phase == UpdatePhase.found;
+            caption: UpdateUi.phase == UpdatePhase.ready ? @tr("Install and restart") : UpdateUi.phase == UpdatePhase.found ? @tr("Download update") :
+                UpdateUi.phase == UpdatePhase.loading ? @tr("Downloading…") : @tr("Verifying package…");
+            invoked => { UpdateUi.dialog-open = false; if UpdateUi.phase == UpdatePhase.ready { UpdateUi.install(); } else { UpdateUi.download(); } }
         }
     }
 }

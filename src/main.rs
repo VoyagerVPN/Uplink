@@ -91,6 +91,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let tray = tray::install()?;
     let profile = settings::path()?;
     let updates = update_worker::start(profile.clone(), updated);
+    let ping_profile = profile.clone();
+    std::thread::spawn(move || settings::run_peer_polls(&ping_profile));
     std::thread::spawn(move || {
         loop {
             if settings::refresh_transport(&profile).unwrap_or(false) {

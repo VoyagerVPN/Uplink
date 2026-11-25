@@ -44,6 +44,11 @@ export component Action inherits Rectangle {
     in property <length> glyph-size: 16px;
     in property <color> glyph-color: transparent;
     callback invoked();
+    out property <bool> keyboard-focus-visible: keys.show-focus;
+    public function focus-default(show-outline: bool) {
+        if show-outline { keys.focus(); }
+        else { keys.focus-from-pointer(); }
+    }
     accessible-role: button;
     accessible-label: caption;
     accessible-action-default => {if root.available{root.invoked();}}
@@ -142,7 +147,14 @@ export component EditableTitle inherits Rectangle {
 
 export component DialogFrame inherits FocusScope {
     in property <length> card-width: 348px;
+    in property <string> title;
+    in property <string> eyebrow;
+    in property <bool> show-back;
+    in property <bool> show-close: true;
+    callback back();
     callback dismiss();
+    accessible-role: groupbox;
+    accessible-label: root.title;
     key-pressed(e) => {
         if e.text == Key.Escape { root.dismiss(); return accept; }
         return reject;
@@ -152,8 +164,124 @@ export component DialogFrame inherits FocusScope {
         width: root.card-width; height: content.preferred-height;
         background: #202225; border-radius: 9px; border-color: #393c41; border-width: 1px;
         TouchArea {}
-        content := VerticalLayout { padding: 17px; spacing: 12px; @children }
+        content := VerticalLayout {
+            padding: 17px; spacing: 12px;
+            HorizontalLayout {
+                height: root.eyebrow == "" ? 28px : 41px;
+                spacing: 6px;
+                if root.show-back: Action {
+                    width: 26px; height: 28px; icon-only: true;
+                    caption: @tr("Back"); glyph: @image-url("../assets/icon/back.svg");
+                    invoked => { root.back(); }
+                }
+                VerticalLayout {
+                    if root.eyebrow != "": Label { text: root.eyebrow; height: 16px; font-size: 12px; color: #a7abb2; }
+                    Label { text: root.title; font-size: 19px; font-weight: 600; }
+                }
+                if root.show-close: Action {
+                    width: 28px; height: 28px; caption: "×"; title-button: true;
+                    accessible-label: @tr("Close");
+                    invoked => { root.dismiss(); }
+                }
+            }
+            @children
+        }
     }
+}
+
+export component DialogActions inherits HorizontalLayout {
+    height: 32px;
+    spacing: 8px;
+    alignment: end;
+    @children
+}
+
+export component DialogButton inherits Action {
+    height: 32px;
+    filled: !root.primary && !root.icon-only;
+    in property <bool> initial-focus;
+    in property <bool> initial-focus-visible;
+    init => { if root.initial-focus { root.focus-default(root.initial-focus-visible); } }
+}
+
+export component DialogTrigger inherits Action {
+    in property <bool> dialog-open;
+    callback open-dialog();
+    private property <bool> restore-focus;
+    private property <bool> return-outline;
+    invoked => {
+        root.return-outline = root.keyboard-focus-visible;
+        root.open-dialog();
+        root.restore-focus = root.dialog-open;
+    }
+    changed dialog-open => {
+        if !root.dialog-open && root.restore-focus {
+            root.restore-focus = false;
+            root.focus-default(root.return-outline);
+        }
+    }
+}
+
+export component DialogScroll inherits Rectangle {
+    clip: true;
+    in property <length> height-limit: 260px;
+    preferred-height: min(root.height-limit, items.preferred-height);
+    height: self.preferred-height;
+    property <length> overflow: max(0px, view.content-height - view.height);
+    function scroll-to(offset: length) {
+        view.content-y = -clamp(offset, 0px, root.overflow);
+    }
+    keys := FocusScope {
+        focus-on-tab-navigation: root.overflow > 0px;
+        key-pressed(event) => {
+            if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                root.scroll-to(-view.content-y + (event.text == Key.UpArrow ? -16px : 16px));
+                return accept;
+            }
+            return reject;
+        }
+    }
+    if keys.has-focus: Rectangle {
+        border-radius: 4px; border-width: 1px; border-color: #8c929a;
+    }
+    view := Flickable {
+        x: 0; width: parent.width - 16px; height: parent.height;
+        content-width: self.width;
+        content-height: items.preferred-height;
+        items := VerticalLayout {
+            width: view.width; height: self.preferred-height; spacing: 8px;
+            @children
+        }
+    }
+    if root.overflow > 0px: track := TouchArea {
+        x: parent.width - self.width; width: 12px; height: parent.height;
+        property <length> grab-offset;
+        property <length> travel: self.height - thumb.height;
+        function seek(y: length) {
+            root.scroll-to((y - self.grab-offset) / max(1px, self.travel) * root.overflow);
+        }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+                self.grab-offset = self.mouse-y >= thumb.y && self.mouse-y <= thumb.y + thumb.height
+                    ? self.mouse-y - thumb.y : thumb.height / 2;
+                self.seek(self.mouse-y);
+            }
+        }
+        moved => { if self.pressed { self.seek(self.mouse-y); } }
+        scroll-event(e) => { root.scroll-to(-view.content-y - e.delta-y); return accept; }
+        thumb := Rectangle {
+            width: 4px; height: clamp(track.height * (view.height / view.content-height), 24px, track.height);
+            y: track.travel * clamp(-view.content-y / max(1px, root.overflow), 0, 1);
+            border-radius: 2px;
+            background: track.pressed ? #bfec70 : track.has-hover ? #949aa2 : #686e76;
+        }
+    }
+}
+
+export component DialogError inherits DialogScroll {
+    in property <string> text;
+    height-limit: 60px;
+    Label { text: root.text; color: #e99087; font-size: 12px; wrap: word-wrap; overflow: clip; }
 }
 
 export component CopyFeedback inherits Rectangle {
@@ -192,5 +320,34 @@ export component ProgressRing inherits Rectangle {
         MoveTo { x: 9 + 7.5 * sin(root.start-angle); y: 9 - 7.5 * cos(root.start-angle); }
         ArcTo { radius-x: 7.5; radius-y: 7.5; sweep: true; large-arc: root.fraction > 0.5;
             x: 9 + 7.5 * sin(root.end-angle); y: 9 - 7.5 * cos(root.end-angle); }
+    }
+}
+
+export component DialogStep inherits VerticalLayout {
+    in property <string> caption;
+    in property <string> failure;
+    in property <bool> current;
+    in property <bool> complete;
+    private property <bool> failed: root.current && root.failure != "";
+    HorizontalLayout {
+        height: 25px; spacing: 8px;
+        Rectangle {
+            width: 18px;
+            if root.current && !root.failed: ProgressRing {}
+            if !root.current || root.failed: Label {
+                horizontal-alignment: center;
+                text: root.failed ? "×" : root.complete ? "✓" : "·";
+                color: root.failed ? #e99087 : root.complete ? #bfec70 : #a7abb2;
+            }
+        }
+        Label {
+            text: root.caption;
+            font-weight: root.current ? 600 : 400;
+            color: root.current || root.complete ? #eff0f2 : #a7abb2;
+        }
+    }
+    if root.failed: HorizontalLayout {
+        padding-left: 26px;
+        DialogError { text: root.failure; }
     }
 }

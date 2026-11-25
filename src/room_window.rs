@@ -7,6 +7,7 @@ mod setup_window;
 mod tray_menu;
 #[cfg(debug_assertions)]
 mod update_preview;
+mod update_notes;
 mod update_window;
 use network_window::bind_network;
 use slint::{ComponentHandle, ModelRc, VecModel};

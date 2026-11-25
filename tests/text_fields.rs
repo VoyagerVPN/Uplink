@@ -47,6 +47,49 @@ fn key(ui: &RoomWindow, text: impl Into<slint::SharedString>) {
         .dispatch_event(WindowEvent::KeyReleased { text });
 }
 
+fn count_color(surface: &MinimalSoftwareWindow, color: (u8, u8, u8)) -> usize {
+    let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+    surface.request_redraw();
+    surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+    pixels.iter().filter(|p| (p.r, p.g, p.b) == color).count()
+}
+
+#[test]
+fn avatar_save_stays_reachable_with_a_long_error_at_high_dpi() {
+    let (ui, surface) = open();
+    let network = ui.global::<NetworkUi>();
+    network.set_modal("crop".into());
+    let saves = Rc::new(RefCell::new(0));
+    let received = saves.clone();
+    network.on_action(move |action, _| {
+        assert_eq!(action, "save-avatar");
+        *received.borrow_mut() += 1;
+    });
+    for (language, scale) in [("ru", 1.25), ("en", 1.5)] {
+        slint::select_bundled_translation(language).unwrap();
+        let message = uplink::i18n::error_message(language, "The server upload limit is too low for this avatar.");
+        network.set_error(format!("{message} ").repeat(16).into());
+        ui.window().dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
+        let width = (388. * scale) as usize;
+        let height = (540. * scale) as usize;
+        surface.set_size(PhysicalSize::new(width as u32, height as u32));
+        let mut pixels = vec![slint::Rgb8Pixel::default(); width * height];
+        surface.request_redraw();
+        surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, width); });
+        if let Some(output) = std::env::var_os("UPLINK_DIALOG_DPI_CAPTURE") {
+            let output = std::path::PathBuf::from(output).join(format!("avatar-{language}.png"));
+            let bytes: Vec<_> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+            image::save_buffer(output, &bytes, width as u32, height as u32, image::ColorType::Rgb8).unwrap();
+        }
+        let is_lime = |pixel: &slint::Rgb8Pixel| matches!((pixel.r, pixel.g, pixel.b), (191, 236, 112) | (206, 246, 133));
+        let save_row = pixels.chunks(width).enumerate().rev().find(|(_, row)| {
+            row.iter().skip((240. * scale) as usize).filter(|p| is_lime(p)).count() >= (30. * scale) as usize
+        }).map(|(y, _)| y).expect("Save button stays inside the window");
+        click(&ui, 286., save_row as f32 / scale - 5.);
+    }
+    assert_eq!(*saves.borrow(), 2);
+}
+
 #[test]
 fn open_language_list_allows_the_first_click_on_settings_and_switches() {
     let (ui, _) = open();
@@ -342,7 +385,7 @@ fn only_creator_can_edit_room_title_and_click_away_to_save() {
 
 #[test]
 fn transferring_from_more_requires_confirmation_and_targets_the_selected_member() {
-    let (ui, _) = open();
+    let (ui, surface) = open();
     let net = ui.global::<NetworkUi>();
     net.set_owner(true);
     net.set_manages(true);
@@ -368,7 +411,25 @@ fn transferring_from_more_requires_confirmation_and_targets_the_selected_member(
     click(&ui, 270., 247.);
     assert_eq!(net.get_modal(), "transfer");
     assert_eq!(net.get_target(), "192.0.2.10");
+    assert_eq!(count_color(&surface, (140, 146, 154)), 0, "Mouse opening leaves Cancel without a focus outline");
+    key(&ui, Key::Return);
+    assert!(net.get_modal().is_empty(), "Enter activates Cancel by default");
     assert!(called.borrow().is_empty());
+    key(&ui, Key::Return);
+    click(&ui, 270., 247.);
+    assert_eq!(net.get_modal(), "transfer", "Enter opens the participant menu again");
+    key(&ui, Key::Tab);
+    assert!(count_color(&surface, (140, 146, 154)) > 0, "Tab shows the keyboard focus");
+    key(&ui, Key::Escape);
+    assert!(net.get_modal().is_empty());
+    assert!(called.borrow().is_empty());
+}
+
+#[test]
+fn join_dialog_shows_a_secondary_button_for_vps_setup() {
+    let (ui, surface) = open();
+    ui.set_adding_network(true);
+    assert!(count_color(&surface, (37, 39, 43)) > 100, "The VPS entry has the secondary button fill");
 }
 
 #[test]
@@ -490,6 +551,34 @@ fn version_opens_release_notes_without_starting_download() {
     assert_eq!(update.get_phase(), UpdatePhase::Found);
     key(&ui, Key::Escape);
     assert!(!update.get_dialog_open());
+    key(&ui, Key::Return);
+    assert!(update.get_dialog_open(), "Enter reopens release notes from the restored version button");
+}
+
+#[test]
+fn closing_join_dialog_restores_the_join_button() {
+    let (ui, _) = open();
+    click(&ui, 100., 169.);
+    assert!(ui.get_adding_network());
+    key(&ui, Key::Escape);
+    assert!(!ui.get_adding_network());
+    key(&ui, Key::Return);
+    assert!(ui.get_adding_network(), "Enter reopens the join dialog from its button");
+}
+
+#[test]
+fn release_notes_wait_until_the_join_dialog_closes() {
+    let (ui, _) = open();
+    let update = ui.global::<UpdateUi>();
+    update.set_phase(UpdatePhase::Ready);
+    ui.set_adding_network(true);
+    update.set_dialog_open(true);
+
+    key(&ui, Key::Escape);
+    assert!(!ui.get_adding_network());
+    assert!(update.get_dialog_open());
+    key(&ui, Key::Escape);
+    assert!(!update.get_dialog_open());
 }
 
 #[test]
@@ -583,7 +672,8 @@ fn create_from_wizard(proxy: bool) {
         key(&ui, Key::Escape);
         assert!(net.get_modal().is_empty());
         assert!(ui.get_creating_network());
-        click(&ui, 67., avatar_y);
+        key(&ui, Key::Return);
+        assert_eq!(net.get_modal(), "crop", "The result screen restores focus to its avatar");
         click(&ui, 291., primary_y());
         assert!(net.get_has_avatar());
         assert!(net.get_modal().is_empty());

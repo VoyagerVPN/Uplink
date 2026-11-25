@@ -4,6 +4,8 @@ use slint::{ComponentHandle, LogicalPosition, PhysicalSize, Rgb8Pixel};
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 slint::include_modules!();
+#[path = "../src/update_notes.rs"]
+mod update_notes;
 
 struct TestDesktop {
     surface: Rc<MinimalSoftwareWindow>,
@@ -541,15 +543,7 @@ fn long_release_notes_scroll_beside_the_text() {
     let update = ui.global::<UpdateUi>();
     update.set_phase(UpdatePhase::Ready);
     update.set_target("0.1.1".into());
-    let notes: Vec<_> = include_str!("../release/notes/v0.1.1.md")
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| ReleaseNote {
-            heading: line.starts_with("## "),
-            text: line.trim_start_matches("## ").into(),
-            bullet: false,
-        })
-        .collect();
+    let notes = update_notes::parse(include_str!("../release/notes/v0.1.1.md"));
     update.set_notes(slint::ModelRc::new(slint::VecModel::from(notes)));
     update.set_dialog_open(true);
     ui.show().unwrap();
@@ -621,4 +615,21 @@ fn long_release_notes_scroll_beside_the_text() {
         },
     ])));
     assert!(thumb(&render()).is_none());
+    let note = ReleaseNote {
+        text: "New — Create a network.".into(),
+        new_entry: true,
+        ..Default::default()
+    };
+    update.set_notes(slint::ModelRc::from([note.clone()]));
+    let starred = render();
+    update.set_notes(slint::ModelRc::from([ReleaseNote {
+        text: "\u{2003}New — Create a network.".into(),
+        new_entry: false,
+        ..note
+    }]));
+    let unmarked = render();
+    assert!((160..360).any(|y| (42..52).any(|x| {
+        let i = y * 388 + x;
+        starred[i].r > 140 && unmarked[i].r < 70
+    })), "The New marker should be visible before the text");
 }

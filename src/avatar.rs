@@ -127,26 +127,30 @@ impl Draft {
         self.x = (self.x - dx * side / 216.).clamp(half, self.image.width() as f32 - half);
         self.y = (self.y - dy * side / 216.).clamp(half, self.image.height() as f32 - half);
     }
-    pub fn preview(&self) -> Image {
+    pub fn preview(&self, scale_factor: f32) -> Image {
+        let size = (284. * scale_factor.clamp(1., 3.)).round() as u32;
+        let pixels_per_point = size as f32 / 284.;
         let scale = self.side() / 216.;
         let source = self.thumbnail.as_ref().unwrap_or(&self.image);
         let sx = source.width() as f32 / self.image.width() as f32;
         let sy = source.height() as f32 / self.image.height() as f32;
-        surface(&RgbaImage::from_fn(284, 284, |x, y| {
-            let (dx, dy) = (x as f32 - 141.5, y as f32 - 141.5);
+        surface(&RgbaImage::from_fn(size, size, |x, y| {
+            let (dx, dy) = (
+                (x as f32 + 0.5) / pixels_per_point - 142.,
+                (y as f32 + 0.5) / pixels_per_point - 142.,
+            );
             let u = (self.x + dx * scale) * sx - 0.5;
             let v = (self.y + dy * scale) * sy - 0.5;
             let mut rgb = imageops::interpolate_bilinear(source, u, v)
                 .unwrap_or(image::Rgba([21, 22, 24, 255]));
             let (qx, qy) = (dx.abs() - 60., dy.abs() - 60.);
             let dist = qx.max(0.).hypot(qy.max(0.)) + qx.max(qy).min(0.) - 48.;
-            if dist > 0. {
-                for c in &mut rgb.0[..3] {
-                    *c = (*c as f32 * 0.31 + 6.) as u8;
-                }
-            }
-            if dist.abs() < 0.65 {
-                rgb = image::Rgba([111, 115, 121, 255]);
+            let tint = (dist * pixels_per_point + 0.5).clamp(0., 1.);
+            let outline = ((0.65 - dist.abs()) * pixels_per_point + 0.5).clamp(0., 1.);
+            for (channel, border) in rgb.0[..3].iter_mut().zip([111., 115., 121.]) {
+                let original = f32::from(*channel);
+                let shaded = original + tint * (original * 0.31 + 6. - original);
+                *channel = (shaded + outline * (border - shaded)).round() as u8;
             }
             rgb
         }))
@@ -166,6 +170,29 @@ impl Draft {
             .map_err(io::Error::other)?;
         Ok(STANDARD.encode(out.into_inner()))
     }
+}
+
+#[cfg(test)]
+#[test]
+fn avatar_preview_is_rasterized_at_the_window_scale() {
+    let draft = Draft {
+        image: RgbaImage::from_pixel(648, 648, image::Rgba([160, 150, 120, 255])),
+        thumbnail: None,
+        x: 324.,
+        y: 324.,
+        zoom: 1.,
+    };
+    for (scale, size) in [(1., 284), (1.25, 355), (1.5, 426)] {
+        let preview = draft.preview(scale).size();
+        assert_eq!((preview.width, preview.height), (size, size));
+    }
+    let saved = draft.encode(false).unwrap();
+    let avatar = stored(&saved).unwrap().size();
+    assert_eq!((avatar.width, avatar.height), (512, 512));
+    let compressed = STANDARD.decode(draft.encode(true).unwrap()).unwrap();
+    let mut pixels = Vec::new();
+    io::Read::read_to_end(&mut flate2::read::ZlibDecoder::new(compressed.as_slice()), &mut pixels).unwrap();
+    assert_eq!(pixels.len(), 512 * 512 * 4);
 }
 
 #[cfg(test)]

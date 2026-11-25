@@ -1,4 +1,4 @@
-use super::{RoomWindow, UpdatePhase, UpdateUi};
+use super::{RoomWindow, UpdatePhase, UpdateUi, update_notes};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{io, os::windows::io::AsRawHandle, path::Path};
 use uplink::{
@@ -25,24 +25,7 @@ fn apply(ui: &RoomWindow, state: Status) {
     if update.get_target().as_str() != state.target
         || update.get_notes().row_count() == 0 && !state.notes.is_empty()
     {
-        let rows: Vec<_> = state
-            .notes
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|line| {
-                let text = line
-                    .strip_prefix("## ")
-                    .or_else(|| line.strip_prefix("- "))
-                    .unwrap_or(line);
-                super::ReleaseNote {
-                    text: text.replace("**", "").into(),
-                    heading: line.starts_with("## "),
-                    bullet: line.starts_with("- "),
-                }
-            })
-            .collect();
-        update.set_notes(ModelRc::new(VecModel::from(rows)));
+        update.set_notes(ModelRc::new(VecModel::from(update_notes::parse(&state.notes))));
     }
     update.set_target(state.target.into());
     update.set_percent(state.percent.into());

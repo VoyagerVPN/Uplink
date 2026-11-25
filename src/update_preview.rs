@@ -113,7 +113,7 @@ pub fn run(ui: &RoomWindow, scene: &str) -> Result<(), Box<dyn std::error::Error
                 .map(|s| super::ReleaseNote {
                     text: uplink::i18n::message(&lang, s).into(),
                     bullet: true,
-                    heading: false,
+                    ..Default::default()
                 })
                 .to_vec(),
             )));

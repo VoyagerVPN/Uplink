@@ -21,7 +21,7 @@ fn load_file(ui: &RoomWindow, draft: &Editor, path: PathBuf) {
     }
     match avatar::Draft::open(&path) {
         Ok(photo) => {
-            net.set_preview(photo.preview());
+            net.set_preview(photo.preview(ui.window().scale_factor()));
             net.set_zoom(photo.zoom);
             *draft.borrow_mut() = Some(photo);
             net.set_error("".into());
@@ -35,7 +35,7 @@ fn adjust(ui: &RoomWindow, draft: &Editor, x: f32, y: f32, zoom: f32) {
         d.adjust(x, y, zoom);
         let net = ui.global::<NetworkUi>();
         net.set_zoom(d.zoom);
-        net.set_preview(d.preview());
+        net.set_preview(d.preview(ui.window().scale_factor()));
     }
 }
 
@@ -229,6 +229,12 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
     window.window().on_winit_window_event(move |win, event| {
         if let Some(ui) = weak.upgrade() {
             let net = ui.global::<NetworkUi>();
+            if let WindowEvent::ScaleFactorChanged { scale_factor, .. } = event
+                && net.get_modal() == "crop"
+                && let Some(photo) = draft.borrow().as_ref()
+            {
+                net.set_preview(photo.preview(*scale_factor as f32));
+            }
             if avatar_editor_available(&ui) && net.get_modal().is_empty()
             {
                 match event {

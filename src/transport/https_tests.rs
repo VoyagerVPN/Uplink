@@ -133,7 +133,32 @@ fn rejected_join_records_http_status_without_logging_either_http_body() {
     let (tls, dir) = test_tls();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let host = listener.local_addr().unwrap().to_string();
-    let service = thread::spawn(move || {
+    let service = reject_with_private_response(tls, listener, "login", "private-password");
+    let result = join_log::run(
+        &dir.path().join("prefs.json"),
+        "password",
+        &|_| {},
+        |progress| {
+            progress(crate::settings::JoinStage::Access);
+            post(&host, "login", json!({"password":"private-password"})).map(|_| ())
+        },
+    );
+    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    service.join().unwrap();
+    let log = fs::read_to_string(dir.path().join("last-join.log")).unwrap();
+    assert!(log.contains("operation=http_login http_status=403"));
+    assert!(log.contains("result=failed operation=http_login"));
+    assert!(!log.contains("private-"));
+    TEST_CA.set(None);
+}
+
+fn reject_with_private_response(
+    tls: Arc<ServerConfig>,
+    listener: TcpListener,
+    endpoint: &'static str,
+    secret: &'static str,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
         let (socket, _) = listener.accept().unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -143,7 +168,7 @@ fn rejected_join_records_http_status_without_logging_either_http_body() {
             socket,
         ));
         let mut lines = (&mut stream).lines().map(Result::unwrap);
-        assert!(lines.next().unwrap().starts_with("POST /v1/login "));
+        assert!(lines.next().unwrap().starts_with(&format!("POST /v1/{endpoint} ")));
         let n = lines
             .take_while(|l| !l.is_empty())
             .filter_map(|l| {
@@ -159,7 +184,7 @@ fn rejected_join_records_http_status_without_logging_either_http_body() {
         assert!(
             String::from_utf8(body)
                 .unwrap()
-                .contains("private-password")
+                .contains(secret)
         );
         let reply = r#"{"error":"private-response"}"#;
         write!(
@@ -169,21 +194,26 @@ fn rejected_join_records_http_status_without_logging_either_http_body() {
         )
         .unwrap();
         stream.get_mut().flush().unwrap();
+    })
+}
+
+#[test]
+fn background_sync_logs_the_http_status_and_adapter_code_without_secrets() {
+    let (tls, dir) = test_tls();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let host = listener.local_addr().unwrap().to_string();
+    let service = reject_with_private_response(tls, listener, "sync", "private-session");
+    let mut member: Membership = serde_json::from_value(json!({
+        "host":host,"id":"1234","node":"node","name":"Test","session":"private-session"
+    })).unwrap();
+    let result = member.refresh_using("test", &dir.path().join("prefs.json"), |_| {
+        Err(io::Error::from_raw_os_error(5))
     });
-    let result = join_log::run(
-        &dir.path().join("prefs.json"),
-        "password",
-        &|_| {},
-        |progress| {
-            progress(crate::settings::JoinStage::Access);
-            post(&host, "login", json!({"password":"private-password"})).map(|_| ())
-        },
-    );
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
     service.join().unwrap();
-    let log = fs::read_to_string(dir.path().join("last-join.log")).unwrap();
-    assert!(log.contains("operation=http_login http_status=403"));
-    assert!(log.contains("result=failed operation=http_login"));
+    let log = fs::read_to_string(dir.path().join("transport.log")).unwrap();
+    assert!(log.contains("operation=sync_membership http_status=403 result=failed kind=PermissionDenied"));
+    assert!(log.contains("operation=query_adapter_ip result=failed kind=PermissionDenied win32=5"));
     assert!(!log.contains("private-"));
     TEST_CA.set(None);
 }
