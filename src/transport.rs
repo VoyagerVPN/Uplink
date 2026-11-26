@@ -98,6 +98,8 @@ pub struct Membership {
     #[serde(default)]
     pub server_ms: Option<u32>,
     #[serde(default)]
+    pub server_revision: Option<u16>,
+    #[serde(default)]
     pub health: String,
     #[serde(default)]
     pub availability: Availability,
@@ -302,7 +304,7 @@ pub fn bootstrap(host: &str, token: &str, progress: &dyn Fn(crate::settings::Joi
         host: host.into(), avatar_revision: None, methods: None, assigned_ip: None, credential_expires_at: 0,
         id: hex(&info["id"], 32)?, name: info["name"].as_str().unwrap_or(host).into(), node: String::new(),
         session: format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()),
-        own_ip: String::new(), rows: Vec::new(), server_ms: None, health: "ok".into(),
+        own_ip: String::new(), rows: Vec::new(), server_ms: None, server_revision: None, health: "ok".into(),
         ssh_requests: Vec::new(), ssh_history: Vec::new(), ssh_supported: false, ssh_key_requests: false,
         availability: Availability::Available,
     })
@@ -640,6 +642,7 @@ impl Membership {
             self.ssh_history = decode_optional_list(data, "ssh_history")?;
             self.ssh_supported = data["ssh_requests"].is_array();
             self.ssh_key_requests = self.ssh_supported && data["ssh_key_requests"] == true;
+            self.server_revision = data["server_revision"].as_u64().and_then(|value| u16::try_from(value).ok()).filter(|value| *value > 0);
             self.name = data["name"].as_str().unwrap_or(&self.host).to_owned();
         } else {
             for row in &mut self.rows {
@@ -666,7 +669,9 @@ mod tests {
         let previous_server = json!({"id":"1234","name":"Network","members":[],"methods":null});
         member.update_status(&Value::Null, Ok(previous_server.clone()), None).unwrap();
         assert!(!member.ssh_supported);
+        assert_eq!(member.server_revision, None);
         let mut updated_server = previous_server;
+        updated_server["server_revision"] = json!(3);
         updated_server["ssh_requests"] = json!([{
             "id":"request","requester":"bob","recipient":"alice","state":"pending","occurred_at":1234
         }]);
@@ -675,6 +680,7 @@ mod tests {
         }]);
         member.update_status(&Value::Null, Ok(updated_server), None).unwrap();
         assert!(member.ssh_supported);
+        assert_eq!(member.server_revision, Some(3));
         assert_eq!(member.ssh_requests[0].recipient, "alice");
         assert_eq!(member.ssh_history[0].occurred_at, 1230);
         assert!(member.update_status(&Value::Null, Err(io::Error::new(

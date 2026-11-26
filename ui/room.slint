@@ -13,7 +13,7 @@ import { ButtonStyle } from "button-style.slint";
 import { TextField } from "text-field.slint";
 import { NetworkActions, RosterMenuAction } from "roster-menu.slint";
 import { NotificationBell } from "notifications.slint";
-export { NoticesUi, SshNotice } from "notifications.slint";
+export { NoticesUi, SshNotice, ServerUpdateNotice } from "notifications.slint";
 import { SshUi, SshRequestDialog } from "ssh-request.slint";
 export { SshUi } from "ssh-request.slint";
 import { ListView } from "std-widgets.slint";
@@ -220,6 +220,15 @@ export component RoomWindow inherits Window {
     in-out property <bool> adding-network;
     in-out property <string> pending-link;
     in-out property <bool> creating-network;
+    private property <string> upgrading-server;
+    private property <int> upgrading-revision;
+    function open-server-upgrade(host: string, revision: int) {
+        VpsUi.failure = ""; VpsUi.invitation = ""; VpsUi.step = 0;
+        VpsUi.upgrade-result = ""; VpsUi.upgrade-log = "";
+        root.upgrading-server = host;
+        root.upgrading-revision = revision;
+        root.creating-network = true;
+    }
     out property <bool> created-network-selected: root.creating-network && VpsUi.invitation!="" && VpsUi.network-key!="" && root.invite-url==VpsUi.network-key;
     function open-join() {
         NetworkUi.join-failure = "";
@@ -283,7 +292,12 @@ export component RoomWindow inherits Window {
                 glyph: @image-url("../assets/icon/power.svg"); glyph-color: root.status-color;
                 invoked => { root.change-option("power", !root.power-on); }
             }
-            NotificationBell {}
+            NotificationBell {
+                update-server(network, host, revision) => {
+                    root.select-room(network);
+                    root.open-server-upgrade(host, revision);
+                }
+            }
             Action { width: 30px; title-button: true; icon-only: true;
                 caption: @tr("Uplink settings");
                 filled: root.settings-open;
@@ -488,6 +502,7 @@ export component RoomWindow inherits Window {
                         can-show-password: root.password-shareable;
                         copy(value) => { return root.copy(value); }
                         leave => { root.leave-room(); }
+                        update-server => { root.open-server-upgrade(root.room-server, NetworkUi.server-revision); }
                     }
                 }
                 Rectangle { height: 11px; }
@@ -626,8 +641,12 @@ export component RoomWindow inherits Window {
         visible:NetworkUi.modal=="";
         enabled:NetworkUi.modal=="";
         created-network-selected:root.created-network-selected;
+        upgrade-host:root.upgrading-server;
+        server-revision:root.upgrading-revision;
+        bundled-server-revision:NetworkUi.bundled-server-revision;
+        suggested-ip:root.upgrading-server!="" && VpsUi.check("ip",root.upgrading-server)==""?root.upgrading-server:"";
         copy-link(value) => { return root.copy(value); }
-        closed => {root.creating-network=false; VpsUi.failure=""; VpsUi.invitation=""; root.join-dialog-closed();}
+        closed => {root.creating-network=false;root.upgrading-server="";VpsUi.failure="";VpsUi.invitation="";root.join-dialog-closed();}
     }
     if NetworkUi.modal!="": NetworkDialog {}
     if UpdateUi.dialog-open && !root.adding-network && !NetworkUi.joining && !root.creating-network && NetworkUi.modal == "": UpdateDialog {}

@@ -31,7 +31,7 @@ use std::{
 };
 use uplink::{changed, control, invite, peers, settings};
 
-const USAGE: &str = "uplinkctl vps create (JSON on stdin) | vps check IPV4 PORT USER [--identity FILE] [--known-hosts FILE] | update status|check|download|install | status | rooms | select URL | power on|off | language CODE | setting autostart|autoconnect|autoupdate on|off | demo-health ok|warning|critical | members | invite | nick NAME | rename-room NAME | join [--headless] URL | leave | tray green|ping|system | show | hide";
+const USAGE: &str = "uplinkctl vps create|upgrade (JSON on stdin) | vps check IPV4 PORT USER [--identity FILE] [--known-hosts FILE] | update status|check|download|install | status | rooms | select URL | power on|off | language CODE | setting autostart|autoconnect|autoupdate on|off | demo-health ok|warning|critical | members | invite | nick NAME | rename-room NAME | join [--headless] URL | leave | tray green|ping|system | show | hide";
 
 fn validate(args: &[&str]) -> io::Result<()> {
     match args {
@@ -102,6 +102,13 @@ fn execute(args: &[&str]) -> io::Result<Value> {
         let config = serde_json::from_reader(io::stdin().lock().take(32768))?;
         let network = uplink::vps::create(config, &settings::path()?, false, |_| {})?;
         return Ok(json!({"ok":true,"invitation":network.invitation}));
+    }
+    if args == ["vps", "upgrade"] {
+        use std::io::Read;
+        let request = serde_json::from_reader(io::stdin().lock().take(32768))?;
+        let report = uplink::vps::upgrade(request, &settings::path()?, |_| {})?;
+        let ok = matches!(report.result.as_str(), "updated" | "current");
+        return Ok(json!({"ok":ok,"result":report.result,"message":report.detail,"log_file":report.log_file}));
     }
     if let ["vps", "check", target @ ..] = args {
         let checks = uplink::vps::Target::parse(target)?.check()?;
@@ -247,7 +254,12 @@ fn main() {
         return;
     }
     match execute(&refs) {
-        Ok(value) => println!("{value}"),
+        Ok(value) => {
+            println!("{value}");
+            if refs == ["vps", "upgrade"] && value["ok"] == false {
+                std::process::exit(1);
+            }
+        }
         Err(e) => {
             let (code, exit) = match e.kind() {
                 io::ErrorKind::InvalidInput => ("invalid_argument", 2),

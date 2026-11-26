@@ -1097,3 +1097,99 @@ msgstr "Сервер Uplink вернул данные другого SSH-зап�
 msgctxt "native"
 msgid "An SSH request from this device already uses another key."
 msgstr "Для этого SSH-запроса уже используется другой ключ."
+
+msgid "Update server"
+msgstr "Обновить сервер"
+
+msgid "All networks on this VPS will briefly disconnect."
+msgstr "Все сети на этом VPS ненадолго отключатся."
+
+msgid "Restore previous server"
+msgstr "Восстановление прежней версии"
+
+msgid "Check the server"
+msgstr "Проверка сервера"
+
+msgid "Back up networks"
+msgstr "Резервное копирование сетей"
+
+msgid "Install server update"
+msgstr "Установка обновления"
+
+msgid "Check the updated server"
+msgstr "Проверка запуска сервера"
+
+msgid "Server updated"
+msgstr "Сервер обновлён"
+
+msgid "Server is up to date"
+msgstr "На сервере актуальная версия"
+
+msgid "Previous server restored"
+msgstr "Прежняя версия восстановлена"
+
+msgid "Server recovery needs attention"
+msgstr "Сервер требует ручного восстановления"
+
+msgid "Server update status unknown"
+msgstr "Статус обновления неизвестен"
+
+msgid "Could not update server"
+msgstr "Не удалось обновить сервер"
+
+msgid "Reconnect to check the update or recover the server."
+msgstr "Подключитесь повторно, чтобы проверить обновление или восстановить сервер."
+
+msgid "Copy update log"
+msgstr "Скопировать журнал обновления"
+
+msgctxt "native"
+msgid "This VPS does not serve the selected network address"
+msgstr "На этом VPS нет инстанса с адресом выбранной сети."
+
+msgctxt "native"
+msgid "The Uplink services did not pass the health check"
+msgstr "Службы Uplink не прошли проверку после запуска."
+
+msgctxt "native"
+msgid "The installed network engine does not match this update"
+msgstr "Установленный сетевой движок несовместим с этим обновлением."
+
+msgctxt "native"
+msgid "This server is already running a newer or unknown version"
+msgstr "На сервере установлена более новая или неизвестная версия."
+
+msgctxt "native"
+msgid "The interrupted update was rolled back"
+msgstr "Прерванное обновление отменено."
+
+msgctxt "native"
+msgid "Another update is running on this VPS"
+msgstr "На этом VPS уже выполняется другое обновление."
+
+msgctxt "native"
+msgid "Enter the address shown in the network menu."
+msgstr "Введите адрес из меню сети."
+
+msgid "Update server · v{}"
+msgstr "Обновить сервер · v{}"
+
+msgid "Server v{}"
+msgstr "Сервер v{}"
+
+msgid "Server version unknown"
+msgstr "Версия сервера неизвестна"
+
+msgid "This server is already running a newer version"
+msgstr "На сервере уже установлена более новая версия."
+
+msgid "Server update · {}"
+msgstr "Обновление сервера · {}"
+
+msgctxt "native"
+msgid "This server is already running a newer version"
+msgstr "На сервере уже установлена более новая версия."
+
+msgctxt "native"
+msgid "The update bundle does not match its server revision"
+msgstr "Пакет обновления не соответствует версии сервера."

@@ -4,6 +4,7 @@ import re
 import os
 import time
 import threading
+from pathlib import Path
 from contextlib import contextmanager
 from collections import deque
 from http.server import ThreadingHTTPServer
@@ -58,12 +59,18 @@ class ClientServer(ThreadingHTTPServer):
 
 
 LOGIN_BUDGET = LoginBudget(12, 60)
+SERVER_REVISION = int(Path(__file__).with_name("revision.txt").read_text())
+MAINTENANCE = Path(__file__).with_name(".update-in-progress")
 
 
 def route(method, path, data):
-    api = networks()
     if method != "POST":
         raise ApiError(403, "Client access only")
+    if path == "/v1/ping":
+        return 200, {"server_revision": SERVER_REVISION}
+    if MAINTENANCE.exists():
+        raise ApiError(503, "The server is updating")
+    api = networks()
     if path == "/v1/bootstrap":
         return 200, api.lookup(data.get("token"))
     if path == "/v1/login":
@@ -83,6 +90,7 @@ def route(method, path, data):
         session, network = data.get("session"), data.get("network")
         snapshot = api.sync(session, data.get("nick"), data.get("avatar_revision"), network,
                             include_ssh=data.get("ssh_requests") is True)
+        snapshot["server_revision"] = SERVER_REVISION
         expiry = data.get("credential_expires_at")
         if network == snapshot["id"] and type(expiry) is int and 0 <= expiry <= api.now():
             # profile повторно проверяет членство под той же блокировкой, что и отзыв.
@@ -94,8 +102,6 @@ def route(method, path, data):
         return 200, api.rename_member(data.get("session"), data.get("node"), data.get("nick"))
     if path == "/v1/manage":
         return 200, api.manage(data.get("session"), data.get("action"), data.get("value"))
-    if path == "/v1/ping":
-        return 200, {}
     if path == "/v1/share":
         return 200, {"token":api.share(data.get("session"))}
     raise ApiError(403, "Client access only")
@@ -117,7 +123,7 @@ _REASONS = {msg: msg.lower().replace(" ", "_") for msg in (
     "Invalid request", "Invalid body size", "Expected a JSON object", "Local service unavailable",
     "Client access only", "Unknown private network", "Invalid participant", "Unknown participant",
     "Invalid SSH request response", "Unknown SSH request", "SSH request already closed",
-    "Invalid SSH public key", "SSH request already has a key",
+    "Invalid SSH public key", "SSH request already has a key", "The server is updating",
     "Network management permission required", "Owner permission required",
 )}
 

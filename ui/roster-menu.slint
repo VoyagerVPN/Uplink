@@ -1,4 +1,4 @@
-import { Action, CopyFeedback } from "controls.slint";
+import { Action, CopyFeedback, Label } from "controls.slint";
 import { NetworkUi } from "network.slint";
 
 export component RosterMenuAction inherits Action {
@@ -20,6 +20,7 @@ export component NetworkActions inherits Rectangle {
     private property <bool> has-invitations: root.can-invite && (NetworkUi.link-on || NetworkUi.qr-on || (NetworkUi.password-on && root.can-show-password));
     callback copy(string) -> bool;
     callback leave();
+    callback update-server();
 
     width: 24px;
     open := Action {
@@ -74,6 +75,17 @@ export component NetworkActions inherits Rectangle {
                             width: parent.width;
                     caption: @tr("Network settings"); glyph: @image-url("../assets/icon/settings.svg");
                     invoked => { menu.close(); NetworkUi.panel = "general"; NetworkUi.error = ""; }
+                }
+                if NetworkUi.live && NetworkUi.owner: RosterMenuAction {
+                    width: parent.width;
+                    caption: NetworkUi.server-revision > 0 ? @tr("Update server · v{}", NetworkUi.server-revision) : @tr("Update server");
+                    glyph: @image-url("../assets/icon/install-update.svg");
+                    glyph-color: NetworkUi.server-revision < NetworkUi.bundled-server-revision ? #bfec70 : #c8cdd3;
+                    invoked => { root.update-server(); menu.close(); }
+                }
+                if NetworkUi.live && !NetworkUi.owner: HorizontalLayout {
+                    padding-left: 8px; height: 23px;
+                    Label {color: #a7abb2; text: NetworkUi.server-revision > 0 ? @tr("Server v{}", NetworkUi.server-revision) : @tr("Server version unknown");}
                 }
                 RosterMenuAction {
                             width: parent.width;

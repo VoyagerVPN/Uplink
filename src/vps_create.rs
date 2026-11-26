@@ -66,9 +66,24 @@ pub fn field_error(field: &str, value: &str) -> &'static str {
 }
 impl Creation {
     pub fn validate(&self) -> io::Result<()> {
+        self.validate_access()?;
+        let name_error = field_error("name", &self.name);
+        if !name_error.is_empty() {
+            return Err(invalid(name_error));
+        }
+        if !self.public_host.is_empty() && !invite::valid_host(&self.public_host)
+            || self.public_host.is_empty() != self.proxy_bind.is_empty()
+            || self.udp_port == Some(0)
+            || !self.proxy_bind.is_empty() && self.proxy_bind.parse::<Ipv4Addr>().is_err()
+        {
+            return Err(invalid("Invalid public endpoint configuration."));
+        }
+        Ok(())
+    }
+
+    fn validate_access(&self) -> io::Result<()> {
         for (field, value) in [
-            ("name", self.name.as_str()),
-            ("ip", &self.ip),
+            ("ip", self.ip.as_str()),
             ("user", &self.user),
             ("port", &self.port.to_string()),
             ("fingerprint", &self.fingerprint),
@@ -86,13 +101,6 @@ impl Creation {
         }
         if !self.identity.is_empty() && !Path::new(&self.identity).is_file() {
             return Err(invalid("SSH file not found"));
-        }
-        if !self.public_host.is_empty() && !invite::valid_host(&self.public_host)
-            || self.public_host.is_empty() != self.proxy_bind.is_empty()
-            || self.udp_port == Some(0)
-            || !self.proxy_bind.is_empty() && self.proxy_bind.parse::<Ipv4Addr>().is_err()
-        {
-            return Err(invalid("Invalid public endpoint configuration."));
         }
         Ok(())
     }
@@ -167,7 +175,7 @@ fn pinned_keys(config: &Creation, prefs: &Path) -> io::Result<tempfile::TempDir>
 }
 
 macro_rules! bundle { ($($f:literal),+) => { json!({$($f:include_str!(concat!("../server/",$f)).replace("\r\n","\n")),+}) }; }
-fn packet(config: &Creation, group: &str) -> io::Result<String> {
+fn packet(request: Value) -> io::Result<String> {
     let files = bundle!(
         "provision.py",
         "instance.py",
@@ -181,10 +189,10 @@ fn packet(config: &Creation, group: &str) -> io::Result<String> {
         "uplink-rpc-guard.service",
         "uplink-owner.socket",
         "uplink-owner.service",
-        "uplink-api.service"
+        "uplink-api.service",
+        "upgrade.py",
+        "revision.txt"
     );
-    let request = json!({"name":config.name.trim(),"ip":config.ip,"port":config.udp_port.unwrap_or(9993),
-        "host":config.host(),"external_tls":!config.public_host.is_empty(),"bind":if config.proxy_bind.is_empty(){"127.0.0.1"}else{&config.proxy_bind},"group":group});
     let mut body = ZlibEncoder::new(Vec::new(), Compression::fast());
     serde_json::to_writer(&mut body, &json!({"files":files,"request":request}))?;
     Ok(STANDARD.encode(body.finish()?))
@@ -252,7 +260,7 @@ fn connection(c: &Creation, pin: &Path) -> io::Result<Child> {
         .spawn()
 }
 
-fn reply(reader: &mut impl BufRead) -> io::Result<Value> {
+fn read_reply(reader: &mut impl BufRead) -> io::Result<Value> {
     let mut line = String::new();
     reader.take(2048).read_line(&mut line)?;
     if !line.ends_with('\n') {
@@ -260,11 +268,49 @@ fn reply(reader: &mut impl BufRead) -> io::Result<Value> {
             "The SSH setup session ended. Check the login, key and administrator access.",
         ));
     }
-    let value: Value = serde_json::from_str(&line)?;
+    Ok(serde_json::from_str(&line)?)
+}
+
+fn reply(reader: &mut impl BufRead) -> io::Result<Value> {
+    let value = read_reply(reader)?;
     if let Some(msg) = value["error"].as_str() {
         return Err(io::Error::other(msg.to_owned()));
     }
     Ok(value)
+}
+
+fn authenticated(c: &Creation, path: &Path) -> io::Result<(
+    std::process::ChildStdin, BufReader<std::process::ChildStdout>, mpsc::Sender<()>,
+)> {
+    let keys = pinned_keys(c, path)?;
+    let mut process = connection(c, &keys.path().join("known_hosts"))?;
+    let input = process.stdin.take().unwrap();
+    let mut output = BufReader::new(process.stdout.take().unwrap());
+    let (lifetime, end) = mpsc::channel::<()>();
+    thread::spawn(move || {
+        // Файл закреплённого ключа нужен до завершения SSH-аутентификации.
+        let _keys = keys;
+        let _ = end.recv_timeout(Duration::from_secs(1200));
+        let _ = process.kill();
+        let _ = process.wait();
+    });
+    if reply(&mut output)?["stage"] != "authenticated" {
+        return Err(io::Error::other("Unexpected SSH response."));
+    }
+    Ok((input, output, lifetime))
+}
+
+fn send_bundle(c: &Creation, input: &mut impl Write, request: Value) -> io::Result<()> {
+    let body = packet(request)?;
+    for chunk in body.as_bytes().chunks(850) {
+        input.write_all(chunk)?;
+        if !c.public_host.is_empty() || c.port != 22 {
+            input.flush()?;
+            thread::sleep(Duration::from_millis(250));
+        }
+    }
+    writeln!(input)?;
+    input.flush()
 }
 
 fn ticket(v: &Value, host: &str) -> io::Result<String> {
@@ -291,33 +337,12 @@ pub fn create(
 ) -> io::Result<CreatedNetwork> {
     c.validate()?;
     step(1);
-    let keys = pinned_keys(&c, path)?;
-    let mut process = connection(&c, &keys.path().join("known_hosts"))?;
-    let mut input = process.stdin.take().unwrap();
-    let mut output = BufReader::new(process.stdout.take().unwrap());
-    // Закрытие канала и таймер завершают дочерний SSH даже при ошибке чтения или зависшем VPS.
-    let (_lifetime, end) = mpsc::channel::<()>();
-    thread::spawn(move || {
-        let _ = end.recv_timeout(Duration::from_secs(900));
-        let _ = process.kill();
-        let _ = process.wait();
-    });
-    if reply(&mut output)?["stage"] != "authenticated" {
-        return Err(io::Error::other("Unexpected SSH response."));
-    }
+    let (mut input, mut output, _lifetime) = authenticated(&c, path)?;
     step(2);
     let scope = format!("{}:{}|{}|{}", c.ip, c.port, c.host(), c.name.trim());
     let group = settings::creation_id(path, &scope)?;
-    let body = packet(&c, &group)?;
-    for chunk in body.as_bytes().chunks(850) {
-        input.write_all(chunk)?;
-        if !c.public_host.is_empty() || c.port != 22 {
-            input.flush()?;
-            thread::sleep(Duration::from_millis(250));
-        }
-    }
-    writeln!(input)?;
-    input.flush()?;
+    send_bundle(&c, &mut input, json!({"name":c.name.trim(),"ip":c.ip,"port":c.udp_port.unwrap_or(9993),
+        "host":c.host(),"external_tls":!c.public_host.is_empty(),"bind":if c.proxy_bind.is_empty(){"127.0.0.1"}else{&c.proxy_bind},"group":group}))?;
     let created = reply(&mut output)?;
     if created["group"] != group {
         return Err(io::Error::other("Unexpected network identifier from VPS."));
@@ -347,4 +372,91 @@ pub fn create(
     settings::finish_creation(path, &scope, &own)?;
     let _ = crate::changed::notify();
     Ok(CreatedNetwork { invitation, key: own.key() })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Upgrade {
+    pub server: String,
+    pub access: Creation,
+}
+
+pub struct UpgradeReport {
+    pub result: String,
+    pub detail: String,
+    pub log_file: PathBuf,
+    pub log_text: String,
+}
+
+pub fn server_revision() -> u16 {
+    include_str!("../server/revision.txt").trim().parse().expect("invalid bundled server revision")
+}
+
+pub fn upgrade(request: Upgrade, path: &Path, progress: impl Fn(i32)) -> io::Result<UpgradeReport> {
+    let Upgrade { server, mut access } = request;
+    access.validate_access()?;
+    if !invite::valid_host(&server) {
+        return Err(invalid("Enter the address shown in the network menu."));
+    }
+    // Прокси и нестандартный SSH-порт используют тот же темп отправки, что и установка.
+    if server != access.ip {
+        access.public_host = server.clone();
+    }
+    let log_file = path.with_file_name("server-upgrade.log");
+    std::fs::create_dir_all(log_file.parent().ok_or_else(|| invalid("Invalid profile directory"))?)?;
+    let attempt = uuid::Uuid::new_v4().to_string();
+    let mut log_text = String::new();
+    let mut record = |fields: Value| {
+        let line = format!("{}\n", json!({"attempt":attempt,"server":server,"time":chrono::Utc::now().to_rfc3339(),"event":fields}));
+        let _ = settings::diagnostics::append(&log_file, &line);
+        log_text.push_str(&line);
+    };
+    progress(1);
+    record(json!({"stage":"ssh","target":server_revision()}));
+    let mut dispatched = false;
+    let result: io::Result<Value> = (|| {
+        let (mut input, mut output, _lifetime) = authenticated(&access, path)?;
+        record(json!({"stage":"authenticated"}));
+        progress(2);
+        send_bundle(&access, &mut input, json!({"operation":"upgrade","host":server,"version":server_revision()}))?;
+        dispatched = true;
+        drop(input);
+        for _ in 0..1000 {
+            let event = read_reply(&mut output)?;
+            if let Some(detail) = event["error"].as_str() {
+                let response = json!({"stage":"done","result":"interrupted","detail":detail});
+                record(response.clone());
+                return Ok(response);
+            }
+            let stage = match event["stage"].as_str() {
+                Some("queued" | "prepare") => 2,
+                Some("backup") => 3,
+                Some("apply") => 4,
+                Some("verify") => 5,
+                Some("rollback") => 6,
+                Some("done") => 0,
+                _ => return Err(io::Error::other("Unexpected SSH response.")),
+            };
+            let fields = ["stage", "time", "target", "source", "version", "job", "failure", "result", "detail"];
+            record(Value::Object(fields.into_iter().filter_map(|field| event.get(field).map(|value| (field.to_owned(), value.clone()))).collect()));
+            if stage == 0 {
+                return Ok(event);
+            }
+            progress(stage);
+        }
+        Err(io::Error::other("Unexpected SSH response."))
+    })();
+    let (result, detail) = match result {
+        Ok(event) => (
+            event["result"].as_str().unwrap_or("interrupted").to_owned(),
+            event["detail"].as_str().unwrap_or_default().to_owned(),
+        ),
+        Err(error) => {
+            let result = if dispatched { "interrupted" } else { "failed" };
+            let kind = format!("{:?}", error.kind());
+            record(json!({"stage":"finish","result":result,"kind":kind,"win32":error.raw_os_error()}));
+            (result.to_owned(), error.to_string())
+        }
+    };
+    Ok(UpgradeReport { result, detail, log_file, log_text })
 }

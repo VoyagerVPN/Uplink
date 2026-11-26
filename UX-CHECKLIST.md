@@ -148,6 +148,8 @@ Earlier results with one adapter per network:
 - [x] Connect the native wizard and headless CLI to SSH deployment, first-owner enrollment and a separate friend invitation. The SSH key is pinned before authentication. Retry keeps the pending group ID. The installer supports a generic public IPv4 or an existing reverse proxy.
 - [x] Animate the active VPS setup step. Show the created network name and editable avatar next to its invitation. Closing or saving the crop returns to the same invitation.
 - [x] Reinstall on service 129 behind the existing proxy. Check invitation bootstrap over public HTTPS and a nonce from external UDP 30000 to internal UDP 9993. Separate Linux peers on an isolated bridge confirmed owner/member roles and UDP echo after interrupting and resuming network creation.
+- [x] Show the independent server version in the network menu and notify owners once per VPS when its bundled update is available. The native menu and notification both open the VPS update dialog.
+- [x] Update the existing VPS through the same operation in the Windows UI and CLI. On an isolated Debian 12 instance, the SSH update to server v3 preserved two networks, an invitation and an existing member profile. An injected startup failure rolled back the active server and its saved data after the update observer disconnected.
 - [ ] Run the full installed Windows owner and friend journey on a dedicated public IPv4, including issuance and renewal from a publicly trusted CA. Provider panel integration is deferred.
 
 Uplink's test instance is ServerHQ service 129.

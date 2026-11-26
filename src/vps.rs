@@ -213,4 +213,4 @@ fn parse_report(reply: &str) -> io::Result<Value> {
 
 #[path = "vps_create.rs"]
 mod creation;
-pub use creation::{Creation, create, field_error};
+pub use creation::{Creation, Upgrade, create, field_error, server_revision, upgrade};

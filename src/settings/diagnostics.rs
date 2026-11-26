@@ -7,7 +7,7 @@ use std::{
 
 const LOG_BYTES: u64 = 512 * 1024;
 
-pub(super) fn append(log: &Path, lines: &str) -> io::Result<()> {
+pub(crate) fn append(log: &Path, lines: &str) -> io::Result<()> {
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)

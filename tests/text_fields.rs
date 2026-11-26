@@ -513,6 +513,119 @@ fn vps_wizard_forwards_provider_proxy_settings() {
     create_from_wizard(true);
 }
 
+#[test]
+fn a_network_owner_can_confirm_a_server_update_from_the_network_menu() {
+    let (ui, surface) = open();
+    slint::select_bundled_translation("en").unwrap();
+    ui.set_joined(true);
+    ui.set_room_name("After hours".into());
+    ui.set_room_server("lan.example".into());
+    ui.set_invite_url("fixture".into());
+    ui.global::<UpdateUi>().set_version("0.3.0".into());
+    ui.set_rooms(slint::ModelRc::new(slint::VecModel::from(
+        [("After hours", "AH", "fixture"), ("Co-op", "CO", "coop"), ("Arena", "A", "arena")]
+            .into_iter().map(|(name, initials, url)| SavedRoom {
+                name: name.into(), initials: initials.into(), url: url.into(), ..Default::default()
+            }).collect::<Vec<_>>()
+    )));
+    ui.set_members(slint::ModelRc::new(slint::VecModel::from(
+        [("Ranazy", 2, 28), ("Mira", 3, 37), ("Orbit", 4, 62), ("Bishop", 5, 0)]
+            .into_iter().map(|(nick, id, ms)| Member {
+                nick: nick.into(), ip: format!("10.42.7.{id}").into(), own: id == 2, creator: id == 2,
+                ping: PingReading { bars: uplink::peers::signal_bars((ms > 0).then_some(ms)), ms: ms as i32 },
+                ..Default::default()
+            }).collect::<Vec<_>>()
+    )));
+    let network = ui.global::<NetworkUi>();
+    network.set_live(true);
+    network.set_manages(true);
+    network.set_owner(true);
+    network.set_server_revision(2);
+    network.set_bundled_server_revision(3);
+    let wizard = ui.global::<VpsUi>();
+    wizard.on_check(|field, value| uplink::vps::field_error(&field, &value).into());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let received = calls.clone();
+    wizard.on_upgrade(move |server, ip, port, user, password, identity| {
+        received.borrow_mut().push([server, ip, port, user, password, identity].map(|s| s.to_string()));
+    });
+    wizard.on_install(|_, _, _, _, _, _, _, _, _| panic!("The update must not create a network"));
+
+    let capture = |name| {
+        if let Some(output) = std::env::var_os("UPLINK_UPGRADE_CAPTURE") {
+            let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+            surface.request_redraw();
+            surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+            let height = if name == "network.png" { 274 } else { 540 };
+            let bytes: Vec<_> = pixels.into_iter().take(388 * height as usize).flat_map(|p| [p.r, p.g, p.b]).collect();
+            let path = std::path::Path::new(&output).join(name);
+            image::save_buffer(path, &bytes, 388, height, image::ColorType::Rgb8).unwrap();
+        }
+    };
+    capture("network.png");
+    click(&ui, 355., 74.);
+    capture("network-menu.png");
+    ui.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(172., 175.) });
+    click(&ui, 172., 175.);
+    assert!(ui.get_creating_network(), "Update server opens the VPS dialog");
+    capture("access.png");
+    let primary = || {
+        let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+        let rows = pixels.chunks(388).enumerate().filter(|(_, row)| {
+            row.iter().filter(|p| p.g > 185 && p.r > 130 && p.b < 150).count() > 55
+        }).map(|(y, _)| y).collect::<Vec<_>>();
+        click(&ui, 194., rows[rows.len() / 2] as f32);
+    };
+    primary();
+    key(&ui, "192.0.2.10");
+    key(&ui, Key::Return);
+    key(&ui, "root");
+    key(&ui, Key::Return);
+    key(&ui, "fixture");
+    key(&ui, Key::Return);
+    assert!(calls.borrow().is_empty(), "The user confirms downtime before the update starts");
+    capture("confirm.png");
+    primary();
+    assert_eq!(calls.borrow().as_slice(), [["lan.example", "192.0.2.10", "22", "root", "fixture", ""]]);
+    key(&ui, Key::Escape);
+    assert!(ui.get_creating_network(), "The update remains visible while the VPS works");
+    wizard.set_upgrade_result("restored".into());
+    wizard.set_failure("Fixture failure".into());
+    platform::update_timers_and_animations();
+    capture("restored.png");
+    key(&ui, Key::Escape);
+    assert!(!ui.get_creating_network(), "A completed result can be dismissed");
+}
+
+#[test]
+fn a_server_update_notification_opens_the_vps_dialog_for_that_server() {
+    let (ui, surface) = open();
+    ui.set_room_server("selected.example".into());
+    ui.global::<UpdateUi>().set_version("0.3.0".into());
+    ui.global::<NoticesUi>().set_server_updates(slint::ModelRc::from([ServerUpdateNotice {
+        server: "another-long-vps-hostname-for-the-fixture.example".into(),
+        network: "fixture-network".into(),
+        name: "Вечерняя сеть с очень длинным названием для друзей".into(),
+        revision: 2,
+    }]));
+    let selected = Rc::new(RefCell::new(String::new()));
+    let destination = selected.clone();
+    ui.on_select_room(move |network| *destination.borrow_mut() = network.to_string());
+    click(&ui, 248., 29.);
+    let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+    surface.request_redraw();
+    surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+    if let Some(output) = std::env::var_os("UPLINK_UPGRADE_CAPTURE") {
+        let bytes: Vec<_> = pixels.into_iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(std::path::Path::new(&output).join("notification.png"), &bytes, 388, 540, image::ColorType::Rgb8).unwrap();
+    }
+    click(&ui, 168., 126.);
+    assert!(ui.get_creating_network());
+    assert_eq!(selected.borrow().as_str(), "fixture-network");
+}
+
 fn create_from_wizard(proxy: bool) {
     let (ui, surface) = open();
     let wizard = ui.global::<VpsUi>();

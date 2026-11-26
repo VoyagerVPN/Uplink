@@ -106,6 +106,7 @@ fn refresh_members(ui: &RoomWindow, room: &settings::Room) {
 }
 
 fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
+    vps_window::refresh_notices(ui, &rooms);
     ssh_window::refresh(ui, &rooms);
     let net = ui.global::<NetworkUi>();
     if rooms.first().map(|r| r.url.as_str()) != Some(ui.get_invite_url().as_str())
@@ -123,6 +124,8 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
         net.set_password_on(false);
     }
     net.set_live(rooms.first().is_some_and(|r| r.live.is_some()));
+    net.set_server_revision(rooms.first().and_then(|r| r.live.as_ref()).and_then(|r| r.server_revision).map_or(0, i32::from));
+    net.set_bundled_server_revision(i32::from(uplink::vps::server_revision()));
     if rooms
         .first()
         .is_none_or(|r| r.live.is_none() || r.url != ui.get_invite_url().as_str() || !r.manages())

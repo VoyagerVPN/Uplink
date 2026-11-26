@@ -9,10 +9,14 @@ export struct SshNotice {
     local-time: string,
 }
 
+export struct ServerUpdateNotice { server: string, network: string, name: string, revision: int }
+
 export global NoticesUi {
     in-out property <[SshNotice]> requests;
     in-out property <[SshNotice]> history;
     in-out property <bool> unread;
+    in-out property <[ServerUpdateNotice]> server-updates;
+    in-out property <bool> server-unread;
     callback read();
     callback inspect(string);
 }
@@ -32,6 +36,7 @@ export component NotificationBell inherits Rectangle {
     private property <bool> history-open;
     private property <string> seen-update;
     property <bool> shows-update: UpdateUi.readable;
+    callback update-server(string, string, int);
     width: 30px;
     Action {
         width: 30px; height: 30px; icon-only: true;
@@ -41,8 +46,9 @@ export component NotificationBell inherits Rectangle {
             if root.shows-update { root.seen-update = UpdateUi.target; }
             popup.show();
             NoticesUi.read();
+            NoticesUi.server-unread = false;
         }
-        if NoticesUi.unread || (root.shows-update && UpdateUi.target != root.seen-update): Rectangle {
+        if NoticesUi.unread || NoticesUi.server-unread || (root.shows-update && UpdateUi.target != root.seen-update): Rectangle {
             x: 21px; y: 3px; width: 7px; height: 7px; border-radius: 4px;
             background: #bfec70; border-width: 1px; border-color: #151618;
         }
@@ -73,6 +79,14 @@ export component NotificationBell inherits Rectangle {
                             invoked => { popup.close(); UpdateUi.dialog-open = true; }
                             Image { x: parent.width - 19px; width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-right.svg"); }
                         }
+                        for update in NoticesUi.server-updates: RosterMenuAction {
+                            width: parent.width; caption-inset: 2px;
+                            visible: !root.history-open; height: root.history-open ? 0px : 29px;
+                            caption: @tr("Server update · {}", update.name);
+                            glyph: @image-url("../assets/icon/install-update.svg"); glyph-color: #bfec70;
+                            invoked => { root.update-server(update.network, update.server, update.revision); popup.close(); }
+                            Image { x: parent.width - 19px; width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-right.svg"); }
+                        }
                         for request in NoticesUi.requests: RosterMenuAction {
                             width: parent.width;
                             visible: !root.history-open; height: root.history-open ? 0px : 29px;
@@ -94,7 +108,7 @@ export component NotificationBell inherits Rectangle {
                                 }
                             }
                         }
-                        if (root.history-open && NoticesUi.history.length == 0) || (!root.history-open && !root.shows-update && NoticesUi.requests.length == 0): HorizontalLayout {
+                        if (root.history-open && NoticesUi.history.length == 0) || (!root.history-open && !root.shows-update && NoticesUi.requests.length == 0 && NoticesUi.server-updates.length == 0): HorizontalLayout {
                             height: 27px; padding-left: 5px;
                             Label { text: root.history-open ? @tr("No notifications yet") : @tr("No pending actions"); color: #a7abb2; font-size: 12px; }
                         }

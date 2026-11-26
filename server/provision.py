@@ -18,7 +18,7 @@ import zipfile
 APP = Path("/opt/uplink")
 STATE = Path("/var/lib/uplink-engine")
 UNITS = Path("/etc/systemd/system")
-SOURCES = ('instance.py', 'membership.py', 'easytier.py', 'engine_config.py', 'engine.py', 'rpc_guard.py', 'client_api.py')
+SOURCES = ('instance.py', 'membership.py', 'easytier.py', 'engine_config.py', 'engine.py', 'rpc_guard.py', 'client_api.py', 'revision.txt')
 SERVICES = ('uplink-engine.service', 'uplink-rpc-guard.service', 'uplink-owner.socket', 'uplink-owner.service', 'uplink-api.service')
 ARCHIVE_SHA256 = "8dc4f8576c7a4978c1f000630014b75ec88d172f6cb10935e72092ddd5ec7a9a"
 ENGINE_FILES = {'easytier-cli': ('easytier-linux-x86_64/easytier-cli', '3e251c060ba574cf124b9a36caf2663a63e4ea30ba746e96aee080905a2d9c5b'), 'easytier-core': ('easytier-linux-x86_64/easytier-core', '442d846bae32b644b42e69edbc15080c31ca0c5ae078e8e593d61b5ecf38114f')}
