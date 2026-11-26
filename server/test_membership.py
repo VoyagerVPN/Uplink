@@ -17,6 +17,153 @@ class Keys:
         self.active.pop((network, node), None)
 
 class MembershipTest(unittest.TestCase):
+    def test_ssh_request_binds_one_public_key_and_keeps_it_private_to_the_parties(self):
+        import base64
+        from unittest.mock import patch
+        from client_api import route
+
+        def identity(byte):
+            wire = b"\0\0\0\x0bssh-ed25519\0\0\0\x20" + bytes([byte]) * 32
+            return "ssh-ed25519 " + base64.b64encode(wire).decode("ascii")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            api = Networks(Path(tmp) / "networks.db", Keys())
+            group = "ab" * 16
+            alice, bob, charlie = (digit * 64 for digit in "123")
+            api.create_group(group, {"name": "Test"})
+            api.redeem(api.issue(group), alice, "Alice")
+            target = api.redeem(api.issue(group), bob, "Bob")
+            api.redeem(api.issue(group), charlie, "Charlie")
+            with patch("client_api.networks", return_value=api):
+                def request(public_key):
+                    return route("POST", "/v1/ssh/request", {
+                        "session": alice, "recipient": target["node"], "public_key": public_key,
+                    })[1]
+
+                with self.assertRaises(ApiError):
+                    request('command="ignored" ' + identity(1))
+                legacy = api.request_ssh(alice, target["node"])
+                first = request(identity(1))
+                self.assertNotEqual(first["id"], legacy["id"])
+                self.assertEqual(first["public_key"], identity(1))
+                self.assertEqual(request(identity(1))["id"], first["id"])
+                with self.assertRaises(ApiError) as conflict:
+                    request(identity(2))
+                self.assertEqual(conflict.exception.status, 409)
+                self.assertEqual(api.sync(bob, "Bob", include_ssh=True)["ssh_requests"][0]["public_key"], identity(1))
+                self.assertEqual(api.sync(charlie, "Charlie", include_ssh=True)["ssh_requests"], [])
+                api.respond_ssh(bob, first["id"], "reject")
+                replacement = request(identity(2))
+                self.assertNotEqual(replacement["id"], first["id"])
+                self.assertEqual(replacement["public_key"], identity(2))
+
+    def test_an_ssh_request_is_visible_only_to_the_two_current_network_members(self):
+        from unittest.mock import patch
+        from client_api import route
+
+        with tempfile.TemporaryDirectory() as tmp:
+            api = Networks(Path(tmp) / "networks.db", Keys(), lambda: 1000)
+            group, outside = "ab" * 16, "cd" * 16
+            api.create_group(group, {"name": "Test"})
+            api.create_group(outside, {"name": "Other"})
+            alice, bob, charlie, dana = (digit * 64 for digit in "1234")
+            source = api.redeem(api.issue(group), alice, "Alice")
+            target = api.redeem(api.issue(group), bob, "Bob")
+            api.redeem(api.issue(group), charlie, "Charlie")
+            other = api.redeem(api.issue(outside), dana, "Dana")
+
+            with patch("client_api.networks", return_value=api):
+                def post(path, **body):
+                    status, result = route("POST", "/v1/" + path, body)
+                    self.assertEqual(status, 200)
+                    return result
+
+                request = post("ssh/request", session=alice, recipient=target["node"])
+                self.assertEqual(request["requester"], source["node"])
+                self.assertEqual(request["recipient"], target["node"])
+                self.assertEqual(request["state"], "pending")
+                self.assertEqual(post("ssh/request", session=alice, recipient=target["node"]), request)
+                self.assertEqual(post("sync", session=bob, nick="Bob", ssh_requests=True)["ssh_requests"], [request])
+                self.assertEqual(post("sync", session=alice, nick="Alice", ssh_requests=True)["ssh_requests"], [request])
+                self.assertEqual(post("sync", session=charlie, nick="Charlie", ssh_requests=True)["ssh_requests"], [])
+                self.assertNotIn("ssh_requests", post("sync", session=bob, nick="Bob"))
+
+                for session, recipient in ((alice, source["node"]), (alice, other["node"]), ("5" * 64, target["node"])):
+                    with self.assertRaises(ApiError):
+                        post("ssh/request", session=session, recipient=recipient)
+
+                for session, decision in ((alice, "reject"), (bob, "cancel"), (charlie, "reject"), (bob, "approve")):
+                    with self.assertRaises(ApiError):
+                        post("ssh/respond", session=session, id=request["id"], decision=decision)
+
+                rejected = post("ssh/respond", session=bob, id=request["id"], decision="reject")
+                self.assertEqual(rejected["state"], "rejected")
+                self.assertEqual(post("ssh/respond", session=bob, id=request["id"], decision="reject"), rejected)
+                self.assertEqual(post("sync", session=alice, nick="Alice", ssh_requests=True)["ssh_requests"], [rejected])
+
+                renewed = post("ssh/request", session=alice, recipient=target["node"])
+                self.assertNotEqual(renewed["id"], request["id"])
+                with self.assertRaises(ApiError):
+                    post("ssh/respond", session=bob, id=request["id"], decision="reject")
+                cancelled = post("ssh/respond", session=alice, id=renewed["id"], decision="cancel")
+                self.assertEqual(cancelled["state"], "cancelled")
+                snapshot = post("sync", session=bob, nick="Bob", ssh_requests=True)
+                self.assertEqual(snapshot["ssh_requests"], [cancelled])
+                self.assertEqual([(entry["id"], entry["state"], entry["occurred_at"])
+                                  for entry in snapshot["ssh_history"]],
+                                 [(renewed["id"], "cancelled", 1000), (request["id"], "rejected", 1000)])
+                self.assertEqual(post("sync", session=charlie, nick="Charlie", ssh_requests=True)["ssh_history"], [])
+
+                api.leave(alice)
+                self.assertEqual(post("sync", session=bob, nick="Bob", ssh_requests=True)["ssh_requests"], [])
+
+    def test_concurrent_ssh_cancel_and_rejection_leave_one_terminal_state(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            api = Networks(Path(tmp) / "networks.db", Keys())
+            group, alice, bob = "ab" * 16, "1" * 64, "2" * 64
+            api.create_group(group, {"name": "Test"})
+            api.redeem(api.issue(group), alice, "Alice")
+            target = api.redeem(api.issue(group), bob, "Bob")
+            request = api.request_ssh(alice, target["node"])
+
+            def close(session, decision):
+                try:
+                    return api.respond_ssh(session, request["id"], decision)["state"]
+                except ApiError as error:
+                    return error.status
+
+            with ThreadPoolExecutor(2) as pool:
+                states = [pool.submit(close, alice, "cancel"), pool.submit(close, bob, "reject")]
+                results = [state.result() for state in states]
+            self.assertEqual(results.count(409), 1)
+            terminal, = [state for state in results if isinstance(state, str)]
+            self.assertIn(terminal, ("cancelled", "rejected"))
+            self.assertEqual(api.sync(alice, "Alice", include_ssh=True)["ssh_requests"][0]["state"], terminal)
+
+    def test_network_nickname_survives_sync_and_cannot_rename_an_unrelated_member(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            api = Networks(Path(tmp) / "networks.db", Keys())
+            group, outside = "ab" * 16, "cd" * 16
+            alice, bob, other = (digit * 64 for digit in "123")
+            api.create_group(group, {"name": "Test"})
+            api.create_group(outside, {"name": "Other"})
+            owner = api.redeem(api.issue(group), alice, "Alice")
+            guest = api.redeem(api.issue(group), bob, "Bob")
+            unrelated = api.redeem(api.issue(outside), other, "Bob")
+            api.assign_owner(group, owner["node"])
+            self.assertEqual(api.lookup(api.share(bob))["id"], group)
+            with self.assertRaises(ApiError):
+                api.rename_member(bob, owner["node"], "No")
+            with self.assertRaises(ApiError):
+                api.rename_member(alice, unrelated["node"], "No")
+            api.rename_member(bob, guest["node"], "Local Bob")
+            api.rename_member(alice, guest["node"], "Co-op Bob")
+            names = {p["node"]: p["nick"] for p in api.sync(bob, "Global Bob")["members"]}
+            self.assertEqual(names[guest["node"]], "Co-op Bob")
+            self.assertEqual(api.sync(other, "Other Bob")["members"][0]["nick"], "Other Bob")
+
     def test_invitation_grants_one_member_and_leave_revokes_only_that_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = Keys()

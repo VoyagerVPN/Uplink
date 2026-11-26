@@ -1,0 +1,106 @@
+import { Action, DialogScroll, HintCard, Label } from "controls.slint";
+import { RosterMenuAction } from "roster-menu.slint";
+import { UpdateUi } from "update.slint";
+
+export struct SshNotice {
+    id: string,
+    caption: string,
+    outcome: string,
+    local-time: string,
+}
+
+export global NoticesUi {
+    in-out property <[SshNotice]> requests;
+    in-out property <[SshNotice]> history;
+    in-out property <bool> unread;
+    callback read();
+    callback inspect(string);
+}
+
+component NoticeTab inherits Action {
+    height: 26px;
+    borderless-focus: true;
+    selected-label-color: #eff0f2;
+    Rectangle {
+        visible: root.selected;
+        x: 5px; y: parent.height - 2px; width: parent.width - 10px; height: 2px;
+        background: #bfec70; border-radius: 1px;
+    }
+}
+
+export component NotificationBell inherits Rectangle {
+    private property <bool> history-open;
+    private property <string> seen-update;
+    property <bool> shows-update: UpdateUi.readable;
+    width: 30px;
+    Action {
+        width: 30px; height: 30px; icon-only: true;
+        caption: @tr("Notifications"); glyph: @image-url("../assets/icon/bell.svg"); glyph-size: 18px;
+        invoked => {
+            root.history-open = false;
+            if root.shows-update { root.seen-update = UpdateUi.target; }
+            popup.show();
+            NoticesUi.read();
+        }
+        if NoticesUi.unread || (root.shows-update && UpdateUi.target != root.seen-update): Rectangle {
+            x: 21px; y: 3px; width: 7px; height: 7px; border-radius: 4px;
+            background: #bfec70; border-width: 1px; border-color: #151618;
+        }
+    }
+    popup := PopupWindow {
+        close-policy: close-on-click-outside;
+        x: 59px - parent.absolute-position.x; y: parent.height + 6px; width: 315px; height: items.preferred-height;
+        Rectangle {
+            background: #202225; border-width: 1px; border-color: #383b40; border-radius: 9px;
+            items := VerticalLayout {
+                padding: 8px; spacing: 5px;
+                HorizontalLayout {
+                    padding-left: 5px; height: 22px;
+                    Label { text: @tr("Notifications"); font-size: 15px; font-weight: 600; }
+                }
+                HorizontalLayout {
+                    alignment: start; spacing: 4px;
+                    NoticeTab { caption: @tr("Actions"); selected: !root.history-open; invoked => { root.history-open = false; } }
+                    NoticeTab { caption: @tr("History"); selected: root.history-open; invoked => { root.history-open = true; } }
+                }
+                DialogScroll {
+                    height-limit: 255px;
+                    reserve-gutter: false;
+                    VerticalLayout {
+                        if !root.history-open && root.shows-update: RosterMenuAction {
+                            width: parent.width;
+                            caption: @tr("Update available {}", UpdateUi.target); glyph: @image-url("../assets/icon/install-update.svg"); glyph-color: #bfec70;
+                            invoked => { popup.close(); UpdateUi.dialog-open = true; }
+                            Image { x: parent.width - 19px; width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-right.svg"); }
+                        }
+                        for request in NoticesUi.requests: RosterMenuAction {
+                            width: parent.width;
+                            visible: !root.history-open; height: root.history-open ? 0px : 29px;
+                            caption: @tr("SSH request from {}", request.caption); glyph: @image-url("../assets/icon/terminal.svg");
+                            invoked => { popup.close(); NoticesUi.inspect(request.id); }
+                            Image { x: parent.width - 19px; width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-right.svg"); }
+                        }
+                        if root.history-open: VerticalLayout {
+                            for event in NoticesUi.history: HorizontalLayout {
+                                height: 30px; spacing: 7px;
+                                Rectangle { width: 18px;
+                                    Image { width: 15px; height: 15px; source: @image-url("../assets/icon/terminal.svg");
+                                        colorize: event.outcome == "active" ? #bfec70 : event.outcome == "expired" ? #efbc72 : #e99087; }
+                                }
+                                Label { text: event.outcome == "rejected" ? @tr("SSH request declined · {}", event.caption) : @tr("SSH request cancelled · {}", event.caption); font-size: 12px; }
+                                Rectangle { width: 20px;
+                                    Image { width: 15px; height: 15px; source: @image-url("../assets/icon/calendar.svg"); }
+                                    Tooltip { HintCard { message: event.local-time; } }
+                                }
+                            }
+                        }
+                        if (root.history-open && NoticesUi.history.length == 0) || (!root.history-open && !root.shows-update && NoticesUi.requests.length == 0): HorizontalLayout {
+                            height: 27px; padding-left: 5px;
+                            Label { text: root.history-open ? @tr("No notifications yet") : @tr("No pending actions"); color: #a7abb2; font-size: 12px; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

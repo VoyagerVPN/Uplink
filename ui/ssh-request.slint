@@ -1,0 +1,95 @@
+import { Action, DialogActions, DialogButton, DialogError, DialogFrame, Label } from "controls.slint";
+import { RosterMenuAction } from "roster-menu.slint";
+
+export global SshUi {
+    in-out property <string> active-id;
+    in-out property <string> requester;
+    in-out property <string> network-name;
+    in-out property <string> initials;
+    in-out property <image> avatar;
+    in-out property <bool> has-avatar;
+    in-out property <bool> working;
+    in-out property <string> error;
+    in-out property <string> receipt-ip;
+    in-out property <string> receipt-network;
+    in-out property <int> receipt;
+    callback decide(string);
+}
+
+export component SshRequestDialog inherits DialogFrame {
+    private property <bool> administrator: true;
+    private property <int> choice: 0;
+    private property <[string]> choices: [@tr("No expiration"), @tr("15 minutes"), @tr("1 hour"), @tr("3 hours"), @tr("24 hours")];
+    card-width: 325px;
+    title: @tr("SSH access request");
+    dismiss => { if !SshUi.working { SshUi.decide("dismiss"); } }
+
+    Label {
+        text: @tr("{} is requesting SSH access to your PC.", SshUi.requester);
+        wrap: word-wrap; color: #b9bdc3;
+    }
+    HorizontalLayout {
+        height: 23px; spacing: 7px;
+        Rectangle {
+            width: 23px; border-radius: 5px; background: #272b2d; clip: true;
+            if SshUi.has-avatar: Image { source: SshUi.avatar; width: 23px; height: 23px; image-fit: cover; }
+            if !SshUi.has-avatar: Label { text: SshUi.initials; font-size: 9px; horizontal-alignment: center; }
+        }
+        Label { text: SshUi.network-name; font-size: 12px; color: #a7abb2; }
+    }
+    Rectangle { height: 1px; background: #383b40; }
+    HorizontalLayout {
+        height: 44px; spacing: 12px;
+        VerticalLayout {
+            Label { text: root.administrator ? @tr("Administrator") : @tr("Windows user"); font-weight: 600; }
+            Label {
+                text: root.administrator ? @tr("Access to Windows files and settings.") : @tr("Standard Windows user permissions.");
+                wrap: word-wrap; font-size: 12px; color: #a7abb2;
+            }
+        }
+        Action {
+            width: 40px; height: 24px; icon-only: true; borderless-focus: true;
+            caption: @tr("Administrator"); accessible-role: switch;
+            accessible-checkable: true; accessible-checked: root.administrator;
+            available: !SshUi.working;
+            background: root.administrator ? #bfec70 : #35383e;
+            Rectangle { x: root.administrator ? 20px : 4px; width: 16px; height: 16px; border-radius: 3px; background: root.administrator ? #263317 : #c1c5cc; }
+            invoked => { root.administrator = !root.administrator; }
+        }
+    }
+    HorizontalLayout {
+        height: 30px; spacing: 12px;
+        Label { text: @tr("Expires"); }
+        Rectangle {
+            width: 132px;
+            Action {
+                width: 132px; height: 30px; filled: true; caption-inset: 10px;
+                caption: root.choices[root.choice];
+                accessible-label: @tr("Expires") + ": " + self.caption;
+                invoked => { durations.show(); }
+                Image { x: parent.width - 22px; width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-down.svg"); }
+            }
+            durations := PopupWindow {
+                close-policy: close-on-click-outside;
+                x: 0px; y: -self.height - 3px; width: 132px; height: 158px;
+                Rectangle {
+                    background: #25272b; border-width: 1px; border-color: #43474b; border-radius: 6px;
+                    VerticalLayout {
+                        padding: 4px;
+                        for item[index] in root.choices: Action {
+                            width: parent.width; height: 30px; align-start: true; caption: item;
+                            selected: index == root.choice;
+                            if self.selected: Image { x: parent.width - 20px; width: 13px; height: 13px; source: @image-url("../assets/icon/check.svg"); }
+                            invoked => { root.choice = index; durations.close(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if SshUi.error != "": DialogError { text: SshUi.error; }
+    DialogActions {
+        DialogButton { caption: @tr("Deny"); available: !SshUi.working; invoked => { SshUi.decide("reject"); } }
+        DialogButton { caption: @tr("Allow"); primary: true; available: !SshUi.working; invoked => { SshUi.decide("approve"); } }
+    }
+}

@@ -24,20 +24,20 @@ export component NetworkDialog inherits DialogFrame {
     title: NetworkUi.modal=="crop"?@tr("Edit avatar"):NetworkUi.modal=="transfer"?@tr("Transfer ownership?"):NetworkUi.modal=="remove"?@tr("Remove member?"):NetworkUi.name;
     eyebrow: NetworkUi.modal == "invite" ? @tr("Invite to network") : "";
     if NetworkUi.modal=="invite": VerticalLayout {spacing:12px;
-        if (NetworkUi.link-on && NetworkUi.qr-on) || (NetworkUi.link-on && NetworkUi.password-on) || (NetworkUi.password-on && NetworkUi.qr-on):HorizontalLayout{height:28px;spacing:2px;
+        if !NetworkUi.invite-method-fixed && ((NetworkUi.link-on && NetworkUi.qr-on) || (NetworkUi.link-on && NetworkUi.password-on) || (NetworkUi.password-on && NetworkUi.qr-on)):HorizontalLayout{height:28px;spacing:2px;
             if NetworkUi.link-on:Tab{title:@tr("Link");selected:NetworkUi.method=="link";choose=>{NetworkUi.method="link";}}
-            if NetworkUi.qr-on:Tab{title:@tr("QR code");selected:NetworkUi.method=="qr";choose=>{NetworkUi.method="qr";}}
-            if NetworkUi.password-on:Tab{title:@tr("Name and password");selected:NetworkUi.method=="password";choose=>{NetworkUi.method="password";}}
+            if NetworkUi.qr-on:Tab{title:@tr("QR code");selected:NetworkUi.method=="qr";choose=>{NetworkUi.method="qr"; NetworkUi.request-link();}}
+            if NetworkUi.password-on:Tab{title:@tr("Name and password");selected:NetworkUi.method=="password";choose=>{NetworkUi.method="password"; NetworkUi.load-password();}}
         }
         if NetworkUi.method=="link":CopyField{title:@tr("Invitation link");value:NetworkUi.link;}
         if NetworkUi.method=="password":CopyField{title:@tr("Server");value:NetworkUi.server;}
         if NetworkUi.method=="password":CopyField{title:@tr("Network name");value:NetworkUi.name;}
-        if NetworkUi.method=="password" && !NetworkUi.live:CopyField{title:@tr("Password");value:NetworkUi.password;}
+        if NetworkUi.method=="password" && NetworkUi.password!="":CopyField{title:@tr("Password");value:NetworkUi.password;}
         if NetworkUi.method=="qr":Image{height:148px;source:NetworkUi.qr-image;image-fit:contain;image-rendering:pixelated;accessible-role:image;accessible-label:@tr("Network QR code");}
         if NetworkUi.method=="qr":Label{text:@tr("Scan to join");horizontal-alignment:center;height:22px;}
         if NetworkUi.method=="":Label{text:@tr("Invitations are disabled");height:32px;}
         if NetworkUi.error != "": DialogError { text: NetworkUi.error; }
-        if NetworkUi.manages:DialogActions { DialogButton { caption:@tr("Configure invitations"); invoked=>{NetworkUi.close-modal();NetworkUi.panel="methods";} } }
+        if NetworkUi.manages && !NetworkUi.invite-method-fixed:DialogActions { DialogButton { caption:@tr("Configure invitations"); invoked=>{NetworkUi.close-modal();NetworkUi.panel="methods";} } }
     }
     if NetworkUi.modal=="crop": VerticalLayout {spacing:12px;
         Rectangle {height:284px;background:#101114;border-radius:6px;clip:true;

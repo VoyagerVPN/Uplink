@@ -25,8 +25,32 @@ function Clear-Directory($path) {
     }
     [IO.Directory]::Delete($path)
 }
+function Clear-SshKeys {
+    $userProfile=[Environment]::GetFolderPath('UserProfile')
+    if (![IO.Path]::IsPathRooted($userProfile)) {throw 'Windows user profile is unavailable'}
+    $ssh=Join-Path $userProfile '.ssh'
+    $keys=Join-Path $ssh $Product.ToLowerInvariant()
+    foreach ($path in $ssh,$keys) {Check-Path $path}
+    if (![IO.Directory]::Exists($keys)) {return}
+    foreach ($item in Get-ChildItem -LiteralPath $keys -Force) {
+        if (!$item.PSIsContainer -and $item.Name -cmatch '^[0-9a-f]{64}\.key$') {
+            Check-Path $item.FullName
+            [IO.File]::Delete($item.FullName)
+        } elseif ($item.PSIsContainer -and $item.Name -cmatch '^\.key-[A-Za-z0-9]{16}$') {
+            Check-Path $item.FullName
+            foreach ($name in 'identity','identity.pub') {
+                $file=Join-Path $item.FullName $name
+                Check-Path $file
+                [IO.File]::Delete($file)
+            }
+            Remove-Empty $item.FullName
+        }
+    }
+    Remove-Empty $keys
+}
 foreach ($p in $profile,$localData) {Check-Path $p}
 if ($Purge) {
+    Clear-SshKeys
     $key="Software\$Product"
     $settings=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key,$true)
     if ($settings) {

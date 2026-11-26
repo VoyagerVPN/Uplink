@@ -4,6 +4,7 @@ mod network_window;
 mod vps_window;
 mod placement;
 mod setup_window;
+mod ssh_window;
 mod tray_menu;
 #[cfg(debug_assertions)]
 mod update_preview;
@@ -53,6 +54,7 @@ fn members(
     policy: &settings::Policy,
     by_ping: bool,
     descending: bool,
+    live: Option<&uplink::transport::Membership>,
 ) -> ModelRc<Member> {
     participants.retain(|p| !policy.removed.iter().any(|ip| ip == p.ip));
     participants.sort_by(|a, b| {
@@ -78,6 +80,15 @@ fn members(
             admin: policy.admins.iter().any(|ip| ip == p.ip),
             own: p.own,
             ping: ping_reading(p.ping_ms),
+            ssh_state: live.and_then(|live| {
+                let peer = live.rows.iter().find(|row| row.ip == p.ip && row.node != live.node)?;
+                let mut requests = live.ssh_requests.iter().filter(|r| r.state == "pending");
+                if requests.clone().any(|r| r.requester == peer.node && r.recipient == live.node) {
+                    Some("incoming")
+                } else if requests.any(|r| r.requester == live.node && r.recipient == peer.node) {
+                    Some("outgoing")
+                } else { None }
+            }).unwrap_or_default().into(),
         })
         .collect::<Vec<_>>();
     ModelRc::new(VecModel::from(rows))
@@ -90,10 +101,12 @@ fn refresh_members(ui: &RoomWindow, room: &settings::Room) {
         &room.policy,
         ui.get_by_ping(),
         ui.get_descending(),
+        room.live.as_ref(),
     ));
 }
 
 fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
+    ssh_window::refresh(ui, &rooms);
     let net = ui.global::<NetworkUi>();
     if rooms.first().map(|r| r.url.as_str()) != Some(ui.get_invite_url().as_str())
         || !rooms.first().is_some_and(|r| r.manages()) && !net.get_panel().is_empty()
@@ -104,6 +117,7 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
     }
     ui.set_joined(!rooms.is_empty());
     if rooms.is_empty() {
+        ui.set_password_shareable(false);
         net.set_server("".into());
         net.set_password("".into());
         net.set_password_on(false);
@@ -142,7 +156,8 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
         net.set_link_on(!room.policy.link_disabled);
         net.set_qr_on(room.policy.qr);
         net.set_password_on(room.policy.password.is_some());
-        if net.get_live() && net.get_panel() == "methods" {
+        ui.set_password_shareable(room.password_shareable);
+        if net.get_live() && (net.get_panel() == "methods" || net.get_modal() == "invite" && net.get_method() == "password") {
             net.invoke_load_password();
         } else {
             net.set_password(room.policy.password.clone().unwrap_or_default().into());
@@ -229,11 +244,7 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
 }
 
 fn apply_synced_rooms(ui: &RoomWindow, nick: String, rooms: Vec<settings::Room>) {
-    let keep_editing = ui.get_editing()
-        && ui.get_nickname().as_str() == nick
-        && rooms
-            .first()
-            .is_some_and(|r| r.live.is_some() && r.url == ui.get_invite_url().as_str());
+    let keep_editing = ui.get_editing() && ui.get_nickname().as_str() == nick;
     if !keep_editing {
         ui.set_editing(false);
         ui.set_nickname(nick.into());
@@ -242,6 +253,9 @@ fn apply_synced_rooms(ui: &RoomWindow, nick: String, rooms: Vec<settings::Room>)
 }
 
 fn open_pending_invite(ui: &RoomWindow, path: &Path) {
+    if ui.get_welcome_open() {
+        return;
+    }
     let net = ui.global::<NetworkUi>();
     if ui.get_creating_network() || net.get_joining() || (ui.get_adding_network() && !net.get_join_failure().is_empty()) {
         return;
@@ -390,9 +404,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     bind_network(&window, path.clone());
+    ssh_window::bind(&window, &path);
     let event = changed::listen()?;
     let nickname = settings::nickname(&path, &peers::windows_name())?;
     window.set_nickname(nickname.as_str().into());
+    window.set_welcome_open(settings::needs_welcome(&path)?);
+    let weak = window.as_weak();
+    let profile = path.clone();
+    window.on_finish_welcome(move |name| {
+        let Some(ui) = weak.upgrade() else { return };
+        match settings::complete_welcome(&profile, &name) {
+            Ok(()) => {
+                ui.set_error("".into());
+                ui.set_nickname(name.trim().into());
+                ui.set_welcome_open(false);
+                if let Ok(rooms) = settings::rooms(&profile) {
+                    apply_rooms(&ui, rooms);
+                }
+                open_pending_invite(&ui, &profile);
+            }
+            Err(e) => show_error(&ui, e),
+        }
+    });
     if let Some(url) = args.first() {
         settings::queue_invite(&path, url)?;
     }
@@ -454,6 +487,37 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => show_error(&ui, e),
         }
+    });
+    let weak = window.as_weak();
+    let profile = path.clone();
+    window.on_rename_member(move |ip, name| {
+        let Some(ui) = weak.upgrade() else { return };
+        if ui.get_alias_saving() {
+            return;
+        }
+        let selected = ui.get_invite_url().to_string();
+        let (ip, name) = (ip.to_string(), name.to_string());
+        ui.set_error("".into());
+        ui.set_alias_saving(true);
+        let profile = profile.as_ref().clone();
+        let weak = ui.as_weak();
+        std::thread::spawn(move || {
+            let result = settings::rename_network_member(&profile, &selected, &ip, &name)
+                .and_then(|()| settings::rooms(&profile));
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                ui.set_alias_saving(false);
+                if ui.get_invite_url() != selected {
+                    return;
+                }
+                match result {
+                    Ok(rooms) => {
+                        ui.invoke_finish_alias();
+                        apply_rooms(&ui, rooms);
+                    }
+                    Err(e) => show_error(&ui, e),
+                }
+            });
+        });
     });
     let weak = window.as_weak();
     let prefs = path.clone();
@@ -627,6 +691,7 @@ mod tests {
                 &settings::Policy::default(),
                 by_ping,
                 descending,
+                None,
             )
             .iter()
             .map(|row| row.nick.to_string())

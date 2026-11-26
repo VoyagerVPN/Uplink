@@ -19,6 +19,18 @@ pub struct Participant {
     pub ping_ms: Option<u32>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct SshRequest {
+    pub id: String,
+    pub requester: String,
+    pub recipient: String,
+    pub state: String,
+    #[serde(default)]
+    pub occurred_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InviteMethods {
     pub link: bool,
@@ -73,6 +85,14 @@ pub struct Membership {
     pub session: String,
     #[serde(default)]
     pub rows: Vec<Participant>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_requests: Vec<SshRequest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_history: Vec<SshRequest>,
+    #[serde(default)]
+    pub ssh_supported: bool,
+    #[serde(default)]
+    pub ssh_key_requests: bool,
     #[serde(default)]
     pub own_ip: String,
     #[serde(default)]
@@ -88,6 +108,15 @@ fn parse_reply(bytes: &[u8]) -> io::Result<Value> {
         join_log::number("json_line", err.line() as i64);
         join_log::number("json_column", err.column() as i64);
         err.into()
+    })
+}
+
+fn decode_optional_list<T: serde::de::DeserializeOwned>(
+    data: &Value,
+    name: &str,
+) -> io::Result<Vec<T>> {
+    data.get(name).map_or(Ok(Vec::new()), |entries| {
+        serde_json::from_value(entries.clone()).map_err(io::Error::from)
     })
 }
 
@@ -142,6 +171,10 @@ fn request_with_diagnostics(
 
     let result = match status {
         200 => parse_reply(&response).map(|reply| (reply, latency)),
+        409 if endpoint == "ssh/request" => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "An SSH request from this device already uses another key.",
+        )),
         410 if endpoint == "sync" && serde_json::from_slice::<Value>(&response)
             .is_ok_and(|v| v["error"] == "Network deleted") =>
         {
@@ -270,6 +303,7 @@ pub fn bootstrap(host: &str, token: &str, progress: &dyn Fn(crate::settings::Joi
         id: hex(&info["id"], 32)?, name: info["name"].as_str().unwrap_or(host).into(), node: String::new(),
         session: format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple()),
         own_ip: String::new(), rows: Vec::new(), server_ms: None, health: "ok".into(),
+        ssh_requests: Vec::new(), ssh_history: Vec::new(), ssh_supported: false, ssh_key_requests: false,
         availability: Availability::Available,
     })
 }
@@ -483,6 +517,21 @@ impl Membership {
         ))
     }
 
+    pub fn rename_member(&self, node: &str, name: &str) -> io::Result<()> {
+        post(&self.host, "nickname", json!({"session":self.session,"node":node,"nick":name}))?;
+        Ok(())
+    }
+
+    pub fn request_ssh(&self, peer: &str, public_key: &str) -> io::Result<SshRequest> {
+        Ok(serde_json::from_value(post(&self.host, "ssh/request",
+            json!({"session":self.session,"recipient":peer,"public_key":public_key}))?)?)
+    }
+
+    pub fn respond_ssh(&self, id: &str, decision: &str) -> io::Result<SshRequest> {
+        Ok(serde_json::from_value(post(&self.host, "ssh/respond",
+            json!({"session":self.session,"id":id,"decision":decision}))?)?)
+    }
+
     pub fn refresh(&mut self, nick: &str, prefs: &std::path::Path) -> io::Result<()> {
         self.refresh_using(nick, prefs, interface)
     }
@@ -497,7 +546,7 @@ impl Membership {
 
         let sync =
             json!({"session":self.session,"network":self.id,"nick":nick,"avatar_revision":self.known_avatar(prefs),
-                "credential_expires_at":self.credential_expires_at});
+                "credential_expires_at":self.credential_expires_at,"ssh_requests":true});
         let snapshot = request_with_diagnostics(&self.host, "sync", sync, Some((prefs, "sync_membership")))
             .map(|(data, _)| data);
         let renewal = match &snapshot {
@@ -571,6 +620,10 @@ impl Membership {
         {
             self.methods = None;
             self.rows.clear();
+            self.ssh_requests.clear();
+            self.ssh_history.clear();
+            self.ssh_supported = false;
+            self.ssh_key_requests = false;
             self.own_ip.clear();
             return snapshot.map(|_| ());
         }
@@ -583,6 +636,10 @@ impl Membership {
             }
             self.rows = serde_json::from_value(data["members"].clone())?;
             self.methods = serde_json::from_value(data["methods"].clone())?;
+            self.ssh_requests = decode_optional_list(data, "ssh_requests")?;
+            self.ssh_history = decode_optional_list(data, "ssh_history")?;
+            self.ssh_supported = data["ssh_requests"].is_array();
+            self.ssh_key_requests = self.ssh_supported && data["ssh_key_requests"] == true;
             self.name = data["name"].as_str().unwrap_or(&self.host).to_owned();
         } else {
             for row in &mut self.rows {
@@ -600,6 +657,33 @@ impl Membership {
 mod tests {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use super::*;
+
+    #[test]
+    fn the_ssh_inbox_works_with_an_updated_server_and_clears_when_access_is_lost() {
+        let mut member: Membership = serde_json::from_value(json!({
+            "host":"example.org","id":"1234","session":"fixture","node":"alice","name":"Network"
+        })).unwrap();
+        let previous_server = json!({"id":"1234","name":"Network","members":[],"methods":null});
+        member.update_status(&Value::Null, Ok(previous_server.clone()), None).unwrap();
+        assert!(!member.ssh_supported);
+        let mut updated_server = previous_server;
+        updated_server["ssh_requests"] = json!([{
+            "id":"request","requester":"bob","recipient":"alice","state":"pending","occurred_at":1234
+        }]);
+        updated_server["ssh_history"] = json!([{
+            "id":"old","requester":"alice","recipient":"bob","state":"cancelled","occurred_at":1230
+        }]);
+        member.update_status(&Value::Null, Ok(updated_server), None).unwrap();
+        assert!(member.ssh_supported);
+        assert_eq!(member.ssh_requests[0].recipient, "alice");
+        assert_eq!(member.ssh_history[0].occurred_at, 1230);
+        assert!(member.update_status(&Value::Null, Err(io::Error::new(
+            io::ErrorKind::PermissionDenied, "Membership revoked",
+        )), None).is_err());
+        assert!(!member.ssh_supported);
+        assert!(member.ssh_requests.is_empty());
+        assert!(member.ssh_history.is_empty());
+    }
 
     #[test]
     fn join_waits_for_a_ready_local_ipv4() {

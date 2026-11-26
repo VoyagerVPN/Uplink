@@ -42,6 +42,7 @@ Earlier dated measurements and release notes below refer to the transport shippe
 - [x] Copy an invite link from the network. The invite field and join icon share one row without a separate label. Press Enter or click the icon to open the link.
 - [x] The first launch shows the Windows username. An edited nickname survives a restart.
 - [x] Hover over the nickname to reveal a pencil on the right. Clicking it opens a bordered inline field with the same font and puts the caret at the end without selecting the text. Enter or a click outside saves the nickname and exits editing. Escape discards changes. Clicking another control also performs its action on that first click. The header and table reflect the saved nickname immediately.
+- [x] In the SSH HTML prototype, first launch shows a welcome dialog until the default nickname is confirmed. The dialog explains that the nickname can be changed in settings. Application settings can change the default for future networks. Existing networks keep their nickname. The participant's own nickname uses brighter semibold text and can be changed for the selected network through its vertical ellipsis. The main screen has no standalone nickname editor.
 - [x] Both fields support Ctrl+V with a Russian keyboard layout. The focused invitation field uses a neutral border without a blue underline.
 - [x] Leave removes membership. Closing the window keeps the network and leaves Uplink in the tray.
 
@@ -51,6 +52,7 @@ Earlier dated measurements and release notes below refer to the transport shippe
 - [x] The title is Uplink. The UI uses “members” and omits old demo labels.
 - [x] The compact profile header shows the nickname and a global power switch on the right. The virtual IP appears in the selected network's table.
 - [x] Below the profile, network icons form a column on the left. The selected network's name, server address, invite and leave buttons sit to its right.
+- [x] In the SSH HTML prototype, keep power in the title bar. The selected network row shows its name and a vertical ellipsis that opens a menu with the same styling as participant actions. Separators divide address copying, enabled invitation methods, and network management. The green link action copies directly. The green key and QR actions open their respective invitation views, with separate copy controls for login and password. The menu shows settings to owners and administrators and ends with a red Leave network action. Network icons in the rail have no hover tooltips.
 - [x] Only the table shows the crown beside the creator's nickname. Owners and admins rename the network with the Overview pencil. Enter or a click outside saves. Escape cancels. Rejoining keeps the name.
 - [x] Member and network lists scroll independently. Ping, Members and IP appear from left to right, with headings and values aligned to the start of each column.
 - [x] Click Members or Ping to sort. Click again to reverse the order. Members without a ping measurement appear last in both directions when sorting by latency.
@@ -120,11 +122,16 @@ Earlier results with one adapter per network:
 
 ## Server and transport
 
-- [x] Prototype a two-party SSH access request in the UI. The Administrator switch defaults to on for each request. Turning it off selects standard user access. The recipient chooses a validity period (until revoked, 15 minutes, one hour or one day). Browser checks cover rejection, cancellation, grant, persistence, expiry, closing from either side and requesting again.
+- [x] Prototype a two-party SSH access request. The sender sees a two-second checkmark, then a gray terminal with a pending tooltip. The recipient gets a compact consent dialog with the network avatar and name. Administrator access defaults to on. The duration picker offers no expiry, 15 minutes, 1 hour, 3 hours and 24 hours.
+- [x] Show active SSH access with a green terminal. In notification history, use green for granted access, red for denied, cancelled or revoked access, and orange for expiry.
 - [x] In the SSH prototype, place the active terminal badge after the owner crown or administrator shield beside the nickname. Keep the IP address in its own column.
 - [x] Hovering anywhere on a participant row reveals its vertical ellipsis and IP copy icon. Keyboard focus also reveals the actions. Keep the ellipsis visible while its menu is open. Label menu items with a terminal, pencil or remove-member icon. Preserve the copy check mark for two seconds and keep the active SSH badge visible at rest.
 - [x] Give every participant a vertical ellipsis in the main table. Members can request SSH access to another participant. Owners and administrators can also rename or remove participants within their existing role permissions. A network nickname is shared within that network and leaves the Windows profile and other networks unchanged. The self menu allows changing one's network nickname.
 - [x] Exercise Windows OpenSSH on loopback with disposable keys and a fixed test command. Verify rejection before consent, a successful certificate login, rejection after revocation or expiry, a fresh key on reapproval and termination of an established session in a Windows job.
+- [x] Keep SSH requests private to the two authenticated members of the same network. The recipient can decline, the sender can cancel, and a fresh request has a new ID. Participating clients receive request states in their usual sync response. Verified locally against SQLite and the client API routes.
+- [x] Keep rejected and cancelled requests in chronological history, including when the same participant sends a fresh request. Show the time in the Windows timezone.
+- [x] Store outgoing Ed25519 identities in the current Windows profile's `.ssh/uplink` directory. Bind the public key to the request, reuse it on retry, and remove the matching local key after cancellation or rejection.
+- [ ] Verify the complete native Windows request path against an updated instance with two clients. The current Windows build can send, cancel and reject requests through a compatible server, and shows the receiving dialog. Approval still needs the local Windows grant implementation.
 - [ ] Connect authenticated member requests to native Windows consent and per-grant SSH credentials. Each selected Windows privilege level must be verified with a real session. Display active access only after local activation succeeds. Enforce revocation and expiry for existing and future sessions, including across restart and network leave. Verify with two consenting PCs.
 
 - [x] Generate a private Linux root from the supplied UDP endpoint with the stock ZeroTier 1.16.2 binary. Confirm repeated setup preserves the keys and signed planet and refuses an incomplete bundle or endpoint change.
@@ -157,6 +164,7 @@ Uplink is for private networks among friends. The project aims to publish the Wi
 - [ ] Measure broadcast readiness immediately after joining. On the first run in a new network, all five packets were lost in one direction. On retry, all five arrived in each direction. Over three Linux rejoins, the first broadcasts in both directions arrived 0.45–3.31 s after the timestamp taken before join. The upper bound and reason for the initial loss remain open.
 - [ ] Repeat joining, bidirectional TCP and UDP, UDP broadcast and latency measurement with two clean Windows Uplink clients on different physical networks. Record whether the route is direct or relayed.
 - [x] Confirm that a friend can enter a real player-hosted Minecraft world over Uplink. On 2026-11-24 the host reported a successful join. The world did not appear through automatic LAN discovery in that session.
+- [x] Record one real LAN discovery case across physical networks. On 2026-11-25 the host reported that a friend on another physical network saw the host's Minecraft LAN world through Uplink. The VPS confirmed membership sync. The game observation came from the host, and the traffic path was not established for this run.
 - [ ] Verify automatic LAN world discovery in an unmodified Minecraft Java client on Windows. Open a world to LAN in each of two independent Uplink networks and a third on the physical LAN. All three must appear in Multiplayer and be joinable without typing an address, switching networks or manually changing Windows routes. Prefer a shared discovery mechanism that works for other games. Verify both hosting and joining on real PCs.
 - [x] In the local receive-side experiment, the Minecraft Java 26.2 detector and an independent listener on a random IPv4 multicast group and UDP port each found two overlay announcements and a host-local announcement on Ethernet. The delivery path followed Windows multicast memberships without game-specific addresses, ports, payload parsing or routes. Turning it off hid both overlay announcements. The home source used multicast loopback. Entry into real game worlds and discovery from another physical LAN host are still open.
 - [x] Repeat receive-side discovery over the internet with service 129. The stock Minecraft Java 26.2 detector found the remote fixture over EasyTier 2.7.1 on the public UDP mapping. A Java Edition status request to the discovered endpoint returned the matching description and ping nonce. A separate random UDP group and port also worked. The remote fixture simulated the game server. Full gameplay, hosting from a Windows PC, peer-to-peer NAT traversal and simultaneous physical-LAN discovery remain open.
@@ -248,6 +256,8 @@ In a separate external connectivity test during stock service stop/start, 36/36 
 - [ ] Confirm the reported first join on the affected Windows PC. The server journal from before the logging change did not record the failed operation.
 
 ## Windows installer
+
+- [x] Explain that deleting user data also deletes Uplink SSH keys. Keep the keys on a standard uninstall and purge only Uplink-owned identities when requested.
 
 - [x] Center the client and setup window in the active monitor's work area on first display. Both were measured on an isolated Windows desktop.
 

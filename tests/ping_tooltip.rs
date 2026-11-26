@@ -11,6 +11,93 @@ struct TestDesktop {
     surface: Rc<MinimalSoftwareWindow>,
     time_ms: Rc<Cell<u64>>,
 }
+
+#[test]
+fn redesign_reference_frames() {
+    let Ok(out) = std::env::var("UPLINK_REDESIGN_OUTPUT") else { return };
+    let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    platform::set_platform(Box::new(TestDesktop {
+        surface: surface.clone(),
+        time_ms: Rc::new(Cell::new(10)),
+    })).unwrap();
+    let ui = RoomWindow::new().unwrap();
+    slint::select_bundled_translation("ru").unwrap();
+    ui.global::<UpdateUi>().set_version("0.3.0".into());
+    ui.set_nickname("Ranazy".into());
+    ui.set_joined(true);
+    ui.set_invite_url("fixture".into());
+    ui.set_room_name("После работы".into());
+    ui.set_room_server("after-hours.example".into());
+    ui.set_password_shareable(true);
+    let net = ui.global::<NetworkUi>();
+    net.set_manages(true);
+    net.set_link_on(true);
+    net.set_password_on(true);
+    net.set_qr_on(true);
+    ui.set_rooms(slint::ModelRc::new(slint::VecModel::from(
+        [("После работы", "ПР", "fixture"), ("Кооп", "К", "coop"), ("Арена", "А", "arena"),
+            ("Еловый бор", "Ел", "pine"), ("Ночная смена", "НС", "night")]
+            .into_iter().map(|(name, initials, url)| SavedRoom {
+                name: name.into(), initials: initials.into(), url: url.into(),
+                server: format!("{url}.example").into(), ..Default::default()
+            }).collect::<Vec<_>>()
+    )));
+    ui.set_members(slint::ModelRc::new(slint::VecModel::from(
+        [("Bishop", 17, 0), ("Kaiser", 15, 0), ("Mira", 10, 24), ("Orbit", 12, 93), ("Ranazy", 11, 38),
+            ("Базальт", 13, 186), ("Грай", 16, 0), ("Еловый", 14, 0)]
+            .into_iter().map(|(nick, ip, ms)| Member {
+                nick: nick.into(), ip: format!("192.0.2.{ip}").into(), own: ip == 11, creator: ip == 11,
+                admin: ip == 12, ping: PingReading { bars: uplink::peers::signal_bars((ms > 0).then_some(ms)), ms: ms as i32 },
+                ..Default::default()
+            }).collect::<Vec<_>>()
+    )));
+    ui.show().unwrap();
+    surface.set_size(PhysicalSize::new(388, 540));
+    let capture = |name| {
+        let mut pixels = vec![Rgb8Pixel::default(); 388 * 540];
+        platform::update_timers_and_animations();
+        surface.request_redraw();
+        assert!(surface.draw_if_needed(|r| { r.render(&mut pixels, 388); }));
+        let bytes = pixels.into_iter().flat_map(|p| [p.r, p.g, p.b]).collect::<Vec<_>>();
+        image::save_buffer(std::path::Path::new(&out).join(format!("{name}.png")), &bytes,
+            388, 540, image::ColorType::Rgb8).unwrap();
+    };
+    let click = |x, y| {
+        use slint::platform::PointerEventButton;
+        let position = LogicalPosition::new(x, y);
+        let button = PointerEventButton::Left;
+        ui.window().dispatch_event(WindowEvent::PointerMoved { position });
+        ui.window().dispatch_event(WindowEvent::PointerPressed { position, button });
+        ui.window().dispatch_event(WindowEvent::PointerReleased { position, button });
+    };
+    capture("rust-roster");
+    click(355., 74.);
+    capture("rust-network-menu");
+    click(10., 480.);
+    ui.global::<UpdateUi>().set_phase(UpdatePhase::Found);
+    ui.global::<UpdateUi>().set_target("0.3.1".into());
+    click(248., 31.);
+    capture("rust-notifications");
+    click(10., 480.);
+    ui.set_settings_open(true);
+    ui.set_language_name("Русский".into());
+    capture("rust-settings");
+    ui.set_settings_open(false);
+    ui.set_welcome_open(true);
+    capture("rust-welcome");
+    ui.set_welcome_open(false);
+    let ssh = ui.global::<SshUi>();
+    ssh.set_requester("Orbit".into());
+    ssh.set_network_name("После работы".into());
+    ssh.set_initials("ПР".into());
+    ssh.set_active_id("fixture".into());
+    capture("rust-ssh-request");
+    ssh.set_active_id("".into());
+    ui.set_adding_network(true);
+    capture("rust-join");
+    net.set_credentials(true);
+    capture("rust-join-password");
+}
 impl Platform for TestDesktop {
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
         Ok(self.surface.clone())
@@ -54,19 +141,19 @@ fn hovering_server_signal_displays_and_dismisses_custom_tooltip() {
     };
     let before = render();
     // У второй строки нет замера. Все три полоски серые, место для числа свободно.
-    for x in [81, 86, 91] {
+    for x in [173, 178, 183] {
         assert!(
-            (247..268).any(|y| {
+            (159..187).any(|y| {
                 let p = before[y * 388 + x];
                 (p.r, p.g, p.b) == (82, 86, 92)
             }),
             "Нет серой полоски при x={x}"
         );
     }
-    assert!((247..268).all(|y| (99..138).all(|x| before[y * 388 + x].r < 80)));
+    assert!((159..187).all(|y| (191..234).all(|x| before[y * 388 + x].r < 80)));
 
     ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(91., 225.),
+        position: LogicalPosition::new(180., 145.),
     });
     time_ms.set(1500);
     platform::update_timers_and_animations();
@@ -149,7 +236,7 @@ fn address_shows_copy_on_hover_then_acknowledges_each_click_for_two_seconds() {
 }
 
 #[test]
-fn server_address_shows_its_copy_icon_on_hover_and_retains_the_check_after_leaving() {
+fn copying_the_server_address_inside_network_actions_shows_a_receipt() {
     verify_address_copy(true);
 }
 
@@ -170,7 +257,13 @@ fn verify_address_copy(server: bool) {
         ..Default::default()
     }])));
     ui.set_room_server("lan".into());
-    ui.on_copy(move |address| address == if server { "lan" } else { "192.0.2.11" });
+    let calls = Rc::new(Cell::new(0));
+    let copied = calls.clone();
+    ui.on_copy(move |address| {
+        assert_eq!(address, if server { "lan" } else { "192.0.2.11" });
+        copied.set(copied.get() + 1);
+        true
+    });
     ui.show().unwrap();
     surface.set_size(PhysicalSize::new(388, 540));
     let render = || {
@@ -181,29 +274,41 @@ fn verify_address_copy(server: bool) {
         });
         pixels
     };
-    let at = if server { LogicalPosition::new(83., 159.) } else { LogicalPosition::new(278., 225.) };
+    let click_at = |at| {
+        let button = PointerEventButton::Left;
+        ui.window().dispatch_event(WindowEvent::PointerMoved { position: at });
+        ui.window().dispatch_event(WindowEvent::PointerPressed { position: at, button });
+        ui.window().dispatch_event(WindowEvent::PointerReleased { position: at, button });
+        platform::update_timers_and_animations();
+    };
+    if server {
+        click_at(LogicalPosition::new(355., 77.));
+        click_at(LogicalPosition::new(215., 110.));
+        assert_eq!(calls.get(), 1);
+        let receipt = |pixels: &[Rgb8Pixel]| {
+            (102..120).any(|y| (122..145).any(|x| {
+                let p = pixels[y * 388 + x];
+                p.g > 140 && p.g > p.b.saturating_add(40)
+            }))
+        };
+        assert!(receipt(&render()));
+        time.set(2020);
+        platform::update_timers_and_animations();
+        assert!(!receipt(&render()));
+        return;
+    }
+    let at = LogicalPosition::new(258., 145.);
     let hover = |pos| {
         ui.window()
             .dispatch_event(WindowEvent::PointerMoved { position: pos })
     };
-    let click = || {
-        let button = PointerEventButton::Left;
-        ui.window().dispatch_event(WindowEvent::PointerPressed {
-            position: at,
-            button,
-        });
-        ui.window().dispatch_event(WindowEvent::PointerReleased {
-            position: at,
-            button,
-        });
-        platform::update_timers_and_animations();
-    };
+    let click = || click_at(at);
     let advance = |t| {
         time.set(t);
         platform::update_timers_and_animations();
     };
     let icon_pixels = |pixels: &[Rgb8Pixel], green| {
-        let (xs, ys) = if server { (98..119, 149..171) } else { (319..338, 216..236) };
+        let (xs, ys) = (288..309, 135..157);
         ys.flat_map(|y| xs.clone().map(move |x| y * 388 + x))
             .filter(|&i| {
                 let p = pixels[i];
@@ -253,13 +358,13 @@ fn hovering_sort_headings_brightens_only_the_text() {
         pixels
     };
     let before = render();
-    for (left, right) in [(80, 143), (143, 263)] {
+    for (left, right) in [(64, 173), (173, 237)] {
         ui.window().dispatch_event(WindowEvent::PointerMoved {
-            position: LogicalPosition::new(left as f32 + 10., 196.),
+            position: LogicalPosition::new(left as f32 + 10., 115.),
         });
         let after = render();
         let mut lighter = 0;
-        for y in 185..208 {
+        for y in 107..126 {
             for x in left..right {
                 let i = y * 388 + x;
                 if x >= right - 12 {
@@ -277,7 +382,7 @@ fn hovering_sort_headings_brightens_only_the_text() {
 }
 
 #[test]
-fn profile_power_reflects_health_and_can_turn_the_client_back_on() {
+fn title_bar_power_reflects_health_and_can_turn_the_client_back_on() {
     use slint::platform::PointerEventButton;
     let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     platform::set_platform(Box::new(TestDesktop {
@@ -300,8 +405,8 @@ fn profile_power_reflects_health_and_can_turn_the_client_back_on() {
             r.render(&mut pixels, 388);
         });
         assert!(
-            (65..90)
-                .flat_map(|y| (327..360).map(move |x| y * 388 + x))
+            (17..44)
+                .flat_map(|y| (202..229).map(move |x| y * 388 + x))
                 .any(|i| {
                     let p = pixels[i];
                     (p.r, p.g, p.b) == color
@@ -323,10 +428,10 @@ fn profile_power_reflects_health_and_can_turn_the_client_back_on() {
     verify_color((242, 169, 78));
     ui.set_health("critical".into());
     verify_color((240, 116, 116));
-    click(344., 77.);
+    click(215., 29.);
     assert!(!ui.get_power_on());
     verify_color((145, 150, 159));
-    click(344., 77.);
+    click(215., 29.);
     assert!(ui.get_power_on());
     ui.set_power_on(false);
     ui.window().dispatch_event(WindowEvent::PointerMoved {
@@ -338,7 +443,7 @@ fn profile_power_reflects_health_and_can_turn_the_client_back_on() {
         r.render(&mut pixels, 388);
     });
     assert_eq!(pixels[302 * 388 + 120], pixels[302 * 388 + 90]);
-    for y in [301., 359.] {
+    for y in [294., 332.] {
         ui.set_power_on(false);
         click(194., y);
         assert!(ui.get_power_on(), "Клик по значку или подписи при y={y}");
@@ -374,11 +479,11 @@ fn settings_switch_highlights_on_hover_and_toggles_once_per_activation() {
         surface.draw_if_needed(|r| {
             r.render(&mut pixels, 388);
         });
-        let color = pixels[194 * 388 + 348];
+        let color = pixels[296 * 388 + 348];
         (color.r, color.g, color.b)
     };
     let idle = rail_color();
-    let position = LogicalPosition::new(334., 194.);
+    let position = LogicalPosition::new(334., 296.);
     ui.window()
         .dispatch_event(WindowEvent::PointerMoved { position });
     assert_ne!(rail_color(), idle);
@@ -432,9 +537,9 @@ fn room_buttons_show_background_only_while_hovered() {
     };
     let before = render();
     for (x, y, background) in [
-        (330, 67, (32, 34, 37)),
-        (321, 126, (21, 22, 24)),
-        (346, 126, (21, 22, 24)),
+        (204, 25, (21, 22, 24)),
+        (237, 25, (21, 22, 24)),
+        (336, 25, (21, 22, 24)),
     ] {
         let p = before[y * 388 + x];
         assert_eq!((p.r, p.g, p.b), background, "Фон кнопки в {x},{y}");
@@ -495,7 +600,7 @@ fn room_buttons_show_background_only_while_hovered() {
     let main = render();
     assert_eq!(header(&main), header(&before));
     let p = main[67 * 388 + 200];
-    assert_eq!((p.r, p.g, p.b), (32, 34, 37), "Панель профиля вернулась");
+    assert_eq!((p.r, p.g, p.b), (21, 22, 24), "На главном экране нет панели профиля");
 }
 
 #[test]

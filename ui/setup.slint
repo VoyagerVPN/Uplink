@@ -42,10 +42,10 @@ export component SetupWindow inherits Window {
                       root.removing ? @tr("Remove Uplink?") : root.mode == "update" ? @tr("Update Uplink") : root.mode == "reinstall" ? @tr("Reinstall Uplink") : root.mode == "downgrade" ? @tr("Roll back Uplink") : @tr("Install Uplink"); }
             if !root.removing || root.done || root.confirm-close: Label { height: 20px; color: #a7abb2;
                 text: root.confirm-close ? @tr("Uplink is running. Close it to continue.") : root.removing ? 
-                    (root.purge ? @tr("Local data removed.") : @tr("Your networks and settings were kept.")) : @tr("Version {}", root.version); }
+                    (root.purge ? @tr("Local data removed.") : @tr("Your networks, settings and SSH keys were kept.")) : @tr("Version {}", root.version); }
         }
         if root.removing && !root.done && !root.confirm-close && root.failure == "": VerticalLayout { spacing: 2px; alignment: center;
-            CheckBox { text: @tr("Delete local data and saved networks"); checked <=> root.purge; enabled: !root.busy; }
+            CheckBox { text: @tr("Delete data, saved networks and SSH keys"); checked <=> root.purge; enabled: !root.busy; }
         }
         if root.failure != "" || (!root.removing && !root.confirm-close): Rectangle { border-radius: 8px; background: #202225;
             HorizontalLayout { padding-left: 12px; padding-right: 8px; spacing: 6px;

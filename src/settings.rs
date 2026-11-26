@@ -1,14 +1,17 @@
 use serde_json::Value;
 pub(crate) mod diagnostics;
 pub(crate) mod join_log;
+pub mod ssh_requests;
 mod membership_sessions;
 mod network;
 mod password;
 mod peer_poll;
+mod ssh_keys;
 pub use peer_poll::run_peer_polls;
 pub use network::network_password;
 pub use network::{
     Policy, join_credentials, join_on_server, join_on_server_with_progress, network_action,
+    rename_network_member,
 };
 use std::{
     fs, io,
@@ -46,6 +49,7 @@ pub struct Room {
     pub server_ms: Option<u32>,
     pub live: Option<crate::transport::Membership>,
     pub server: String,
+    pub password_shareable: bool,
 }
 
 fn saved_urls(prefs: &Value) -> io::Result<Vec<&str>> {
@@ -74,6 +78,11 @@ fn room_info(prefs: &Value, url: &str) -> Room {
     if let Ok(live) =
         serde_json::from_value::<crate::transport::Membership>(prefs["live"][url].clone())
     {
+        let saved_revision = prefs["saved_passwords"][url]["revision"].as_str();
+        let password_shareable = live.methods.as_ref().is_some_and(|methods| {
+            methods.password && saved_revision.is_some()
+                && methods.password_revision.as_deref() == saved_revision
+        }) && live.rows.iter().any(|row| row.node == live.node && matches!(row.role.as_str(), "owner" | "admin"));
         return Room {
             url: url.into(),
             name: live.name.clone(),
@@ -103,6 +112,7 @@ fn room_info(prefs: &Value, url: &str) -> Room {
                 ..Policy::default()
             },
             live: Some(live),
+            password_shareable,
         };
     }
     let guest = match url {
@@ -121,6 +131,7 @@ fn room_info(prefs: &Value, url: &str) -> Room {
     let policy = Policy::load(prefs, url);
     if let Some((name, server, own_ip, creator_ip, server_ms)) = guest {
         Room {
+            password_shareable: policy.password.is_some(),
             url: url.into(),
             live: None,
             name: policy.name.clone().unwrap_or_else(|| name.into()),
@@ -132,6 +143,7 @@ fn room_info(prefs: &Value, url: &str) -> Room {
         }
     } else {
         Room {
+            password_shareable: policy.password.is_some(),
             url: url.into(),
             live: None,
             name: policy.name.clone().unwrap_or_else(|| {
@@ -203,7 +215,12 @@ fn refresh_transport_with(
     for mut live in rooms(path)?.into_iter().filter_map(|room| room.live) {
         let key = live.key();
         let before = serde_json::to_value(&live)?;
-        let result = if enabled { live.refresh(&nick, path) } else { Ok(()) };
+        let joined_nick = live.rows.iter().find(|row| row.node == live.node)
+            .map_or(nick.as_str(), |row| row.nick.as_str()).to_owned();
+        let result = if enabled { live.refresh(&joined_nick, path) } else { Ok(()) };
+        if enabled && live.availability == crate::transport::Availability::Available {
+            ssh_requests::clear_closed_keys(path, &live);
+        }
         if live.availability.membership_gone() { crate::tunnel_profile::remove(&live.id)?; }
         let adapter_available = !live.own_ip.is_empty();
         live.health = if !enabled {
@@ -702,6 +719,14 @@ pub fn save_nickname(path: &Path, name: &str) -> io::Result<()> {
     write_field(path, "nickname", validated_name(name, 32)?)
 }
 
+pub fn needs_welcome(path: &Path) -> io::Result<bool> {
+    Ok(!read_raw(path)?["nickname"].is_string())
+}
+
+pub fn complete_welcome(path: &Path, name: &str) -> io::Result<()> {
+    save_nickname(path, name)
+}
+
 pub fn room_name(path: &Path) -> io::Result<String> {
     let prefs = read(path)?;
     let url = saved_urls(&prefs)?
@@ -1150,6 +1175,22 @@ mod tests {
 #[cfg(test)]
 mod nickname_tests {
     use super::*;
+
+    #[test]
+    fn welcome_requires_explicit_confirmation_and_keeps_an_existing_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefs = dir.path().join("prefs.json");
+        assert!(needs_welcome(&prefs).unwrap());
+        assert!(complete_welcome(&prefs, "\n").is_err());
+        assert!(needs_welcome(&prefs).unwrap());
+        complete_welcome(&prefs, "  Mira  ").unwrap();
+        assert!(!needs_welcome(&prefs).unwrap());
+        assert_eq!(nickname(&prefs, "Windows User").unwrap(), "Mira");
+
+        let existing = dir.path().join("existing.json");
+        save_nickname(&existing, "Orbit").unwrap();
+        assert!(!needs_welcome(&existing).unwrap());
+    }
     #[test]
     fn nickname_survives_reopen_and_leaving_the_room() {
         let dir = tempfile::tempdir().unwrap();

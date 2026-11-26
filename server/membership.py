@@ -29,6 +29,14 @@ def nickname(value):
         raise ApiError(400, "Invalid nickname")
     return value.strip()
 
+def ssh_public_key(value):
+    if not isinstance(value, str) or not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]{68}", value):
+        raise ApiError(400, "Invalid SSH public key")
+    encoded = value.split(" ")[1]
+    wire = base64.b64decode(encoded, validate=True)
+    if len(wire) != 51 or not wire.startswith(b"\0\0\0\x0bssh-ed25519\0\0\0\x20"):
+        raise ApiError(400, "Invalid SSH public key")
+    return value
 
 
 def name_key(name):
@@ -59,7 +67,31 @@ class Networks:
                 address INTEGER NOT NULL, nick TEXT NOT NULL, seen INTEGER NOT NULL,
                 role TEXT DEFAULT 'member', removing INTEGER DEFAULT 0, UNIQUE(network,node), UNIQUE(network,address))""")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS sole_owner ON members(network) WHERE role='owner'")
+            db.execute("""CREATE TABLE IF NOT EXISTS aliases (
+                session TEXT PRIMARY KEY REFERENCES members(session) ON DELETE CASCADE, nick TEXT NOT NULL)""")
             db.execute("CREATE TABLE IF NOT EXISTS departed (session TEXT PRIMARY KEY)")
+            db.execute("""CREATE TABLE IF NOT EXISTS ssh_requests (
+                id TEXT PRIMARY KEY,
+                requester TEXT NOT NULL REFERENCES members(session) ON DELETE CASCADE,
+                recipient TEXT NOT NULL REFERENCES members(session) ON DELETE CASCADE,
+                state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','rejected','cancelled')),
+                requested_at INTEGER NOT NULL DEFAULT 0,
+                public_key TEXT,
+                UNIQUE(requester, recipient))""")
+            ssh_columns = {column["name"] for column in db.execute("PRAGMA table_info(ssh_requests)")}
+            if "requested_at" not in ssh_columns:
+                db.execute("ALTER TABLE ssh_requests ADD COLUMN requested_at INTEGER NOT NULL DEFAULT 0")
+            if "public_key" not in ssh_columns:
+                db.execute("ALTER TABLE ssh_requests ADD COLUMN public_key TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS ssh_request_recipient ON ssh_requests(recipient)")
+            db.execute("""CREATE TABLE IF NOT EXISTS ssh_history (
+                id TEXT PRIMARY KEY,
+                requester TEXT NOT NULL REFERENCES members(session) ON DELETE CASCADE,
+                recipient TEXT NOT NULL REFERENCES members(session) ON DELETE CASCADE,
+                state TEXT NOT NULL CHECK(state IN ('rejected','cancelled')),
+                occurred_at INTEGER NOT NULL)""")
+            db.execute("CREATE INDEX IF NOT EXISTS ssh_history_requester ON ssh_history(requester, occurred_at)")
+            db.execute("CREATE INDEX IF NOT EXISTS ssh_history_recipient ON ssh_history(recipient, occurred_at)")
             yield db
 
     def create_group(self, group, data):
@@ -184,7 +216,66 @@ class Networks:
                 db.execute("DELETE FROM members WHERE session=?", (key,))
         return {}
 
-    def sync(self, session, nick, avatar_revision=None, network=None):
+    def request_ssh(self, session, recipient, public_key=None):
+        key = digest(session)
+        if public_key is not None:
+            public_key = ssh_public_key(public_key)
+        if not isinstance(recipient, str) or not re.fullmatch("[a-f0-9]{10}", recipient):
+            raise ApiError(400, "Invalid participant")
+        with self.transaction() as db:
+            sender = db.execute("SELECT node, network FROM members WHERE session=? AND removing=0", (key,)).fetchone()
+            if not sender:
+                raise ApiError(403, "Invalid session")
+            if sender["node"] == recipient:
+                raise ApiError(400, "Invalid participant")
+            target = db.execute("SELECT session FROM members WHERE network=? AND node=? AND removing=0",
+                                (sender["network"], recipient)).fetchone()
+            if not target:
+                raise ApiError(404, "Unknown participant")
+            pair = (key, target["session"])
+            db.execute("""INSERT INTO ssh_requests(id, requester, recipient, requested_at, public_key) VALUES(?,?,?,?,?)
+                          ON CONFLICT(requester, recipient) DO UPDATE SET id=excluded.id, state='pending',
+                          requested_at=excluded.requested_at, public_key=excluded.public_key
+                          WHERE ssh_requests.state!='pending'
+                             OR (ssh_requests.public_key IS NULL AND excluded.public_key IS NOT NULL)""",
+                       (secrets.token_hex(16), *pair, int(self.now()), public_key))
+            request = db.execute("SELECT id, requested_at, public_key FROM ssh_requests WHERE requester=? AND recipient=?", pair).fetchone()
+            if request["public_key"] != public_key:
+                raise ApiError(409, "SSH request already has a key")
+            reply = {"id": request["id"], "requester": sender["node"], "recipient": recipient,
+                     "state": "pending", "occurred_at": request["requested_at"]}
+            if public_key is not None:
+                reply["public_key"] = public_key
+            return reply
+
+    def respond_ssh(self, session, request_id, decision):
+        key = digest(session)
+        if (not isinstance(request_id, str) or not re.fullmatch("[a-f0-9]{32}", request_id)
+                or decision not in ("cancel", "reject")):
+            raise ApiError(400, "Invalid SSH request response")
+        party, next_state = ("requester_key", "cancelled") if decision == "cancel" else ("recipient_key", "rejected")
+        with self.transaction() as db:
+            request = db.execute("""
+                SELECT r.state, r.requested_at, r.public_key, r.requester AS requester_key, r.recipient AS recipient_key,
+                       sender.node AS requester, target.node AS recipient
+                FROM ssh_requests r JOIN members sender ON sender.session=r.requester
+                JOIN members target ON target.session=r.recipient
+                WHERE r.id=? AND sender.removing=0 AND target.removing=0""", (request_id,)).fetchone()
+            if not request or request[party] != key:
+                raise ApiError(404, "Unknown SSH request")
+            if request["state"] not in ("pending", next_state):
+                raise ApiError(409, "SSH request already closed")
+            db.execute("UPDATE ssh_requests SET state=? WHERE id=?", (next_state, request_id))
+            db.execute("""INSERT OR IGNORE INTO ssh_history(id,requester,recipient,state,occurred_at)
+                          VALUES(?,?,?,?,?)""",
+                       (request_id, request["requester_key"], request["recipient_key"], next_state, int(self.now())))
+            reply = {"id": request_id, "requester": request["requester"],
+                     "recipient": request["recipient"], "state": next_state, "occurred_at": request["requested_at"]}
+            if request["public_key"] is not None:
+                reply["public_key"] = request["public_key"]
+            return reply
+
+    def sync(self, session, nick, avatar_revision=None, network=None, *, include_ssh=False):
         key, nick = digest(session), nickname(nick)
         with self.transaction() as db:
             row = db.execute("""SELECT n.* FROM members m JOIN networks n ON m.network=n.id
@@ -196,12 +287,28 @@ class Networks:
             now = int(self.now())
             db.execute("UPDATE members SET nick=?,seen=? WHERE session=?", (nick, now, key))
             members = [{"node": m["node"], "ip": str(ipaddress.IPv4Address(m["address"])),
-                        "nick": m["nick"], "role": m["role"], "present": m["seen"] > now - 45}
-                       for m in db.execute("SELECT * FROM members WHERE network=? AND removing=0 ORDER BY address", (row["id"],))]
+                        "nick": m["display_nick"], "role": m["role"], "present": m["seen"] > now - 45}
+                       for m in db.execute("""SELECT m.*, COALESCE(a.nick, m.nick) AS display_nick
+                           FROM members m LEFT JOIN aliases a ON a.session=m.session
+                           WHERE m.network=? AND m.removing=0 ORDER BY m.address""", (row["id"],))]
             methods = {"link": bool(row["link"]), "qr": bool(row["qr"]), "password": bool(row["verifier"])}
             if row["salt"]:
                 methods["password_revision"] = hashlib.sha256(row["salt"]).hexdigest()
             result = {"id": row["id"], "name": row["name"], "members": members, "methods": methods}
+            if include_ssh:
+                result["ssh_key_requests"] = True
+                result["ssh_requests"] = [{k: value for k, value in dict(request).items() if value is not None} for request in db.execute("""
+                    SELECT r.id, sender.node AS requester, target.node AS recipient, r.state, r.requested_at AS occurred_at, r.public_key
+                    FROM ssh_requests r JOIN members sender ON sender.session=r.requester
+                    JOIN members target ON target.session=r.recipient
+                    WHERE (r.requester=? OR r.recipient=?) AND sender.removing=0 AND target.removing=0
+                    ORDER BY r.requested_at DESC, r.rowid DESC""", (key, key))]
+                result["ssh_history"] = [dict(event) for event in db.execute("""
+                    SELECT h.id, sender.node AS requester, target.node AS recipient, h.state, h.occurred_at
+                    FROM ssh_history h JOIN members sender ON sender.session=h.requester
+                    JOIN members target ON target.session=h.recipient
+                    WHERE h.requester=? OR h.recipient=?
+                    ORDER BY h.occurred_at DESC, h.rowid DESC LIMIT 100""", (key, key))]
             if isinstance(avatar_revision, str):
                 result["avatar_revision"] = row["revision"]
                 if row["avatar"] and row["revision"] != avatar_revision:
@@ -226,10 +333,35 @@ class Networks:
 
     def share(self, session):
         with self.transaction() as db:
-            group = self.manager(db, session)["network"]
+            member = db.execute("SELECT network FROM members WHERE session=? AND removing=0",
+                                (digest(session),)).fetchone()
+            if not member:
+                raise ApiError(403, "Invalid session")
+            group = member["network"]
             if not db.execute("SELECT 1 FROM networks WHERE id=? AND (link OR qr)", (group,)).fetchone():
                 raise ApiError(403, "Invitations are disabled")
             return self.mint(db, group, "share")
+
+    def rename_member(self, session, node, name):
+        key, name = digest(session), nickname(name)
+        if not isinstance(node, str) or not re.fullmatch("[a-f0-9]{10}", node):
+            raise ApiError(400, "Invalid participant")
+        with self.transaction() as db:
+            actor = db.execute("SELECT * FROM members WHERE session=? AND removing=0", (key,)).fetchone()
+            if not actor:
+                raise ApiError(403, "Invalid session")
+            target = db.execute("SELECT * FROM members WHERE network=? AND node=? AND removing=0",
+                                (actor["network"], node)).fetchone()
+            if not target:
+                raise ApiError(404, "Unknown participant")
+            if actor["session"] != target["session"] and not (
+                actor["role"] == "owner" and target["role"] != "owner" or
+                actor["role"] == "admin" and target["role"] == "member"
+            ):
+                raise ApiError(403, "Network management permission required")
+            db.execute("""INSERT INTO aliases(session,nick) VALUES (?,?)
+                          ON CONFLICT(session) DO UPDATE SET nick=excluded.nick""", (target["session"], name))
+        return {}
 
     def login(self, name, password):
         login = name_key(network_name(name))

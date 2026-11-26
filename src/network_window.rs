@@ -47,6 +47,9 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
     net.on_load_password(move || {
         let Some(ui) = weak.upgrade() else { return };
         let net = ui.global::<NetworkUi>();
+        if !net.get_live() {
+            return;
+        }
         match settings::network_password(&password_profile, ui.get_invite_url().as_str()) {
             Ok(password) => net.set_password(password.into()),
             Err(error) => {
@@ -54,6 +57,34 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
                 problem(&ui, error);
             }
         }
+    });
+    let weak = window.as_weak();
+    let profile = prefs.clone();
+    net.on_copy_invitation(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let net = ui.global::<NetworkUi>();
+        if net.get_copying_link() || !net.get_link_on() {
+            return;
+        }
+        let selection = ui.get_invite_url().to_string();
+        let Ok(Some(room)) = settings::rooms(&profile).map(|rooms| {
+            rooms.into_iter().next().filter(|room| room.url == selection)
+        }) else { return };
+        if room.live.is_none() {
+            report_copy(&ui, Ok(room.url));
+            return;
+        }
+        net.set_copying_link(true);
+        let weak = ui.as_weak();
+        std::thread::spawn(move || {
+            let result = room.live.expect("checked live network").share();
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                ui.global::<NetworkUi>().set_copying_link(false);
+                if ui.get_invite_url() == selection {
+                    report_copy(&ui, result);
+                }
+            });
+        });
     });
     let weak = window.as_weak();
     let profile = prefs.clone();
@@ -273,4 +304,17 @@ pub(super) fn bind_network(window: &RoomWindow, prefs: Rc<PathBuf>) {
         }
         EventResult::Propagate
     });
+}
+
+fn report_copy(ui: &RoomWindow, result: io::Result<String>) {
+    let net = ui.global::<NetworkUi>();
+    let copied = match result {
+        Ok(link) => ui.invoke_copy(link.into()),
+        Err(error) => {
+            show_error(ui, error);
+            false
+        }
+    };
+    net.set_copied_link(copied);
+    net.set_copy_result(net.get_copy_result().wrapping_add(1));
 }

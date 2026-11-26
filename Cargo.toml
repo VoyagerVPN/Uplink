@@ -1,6 +1,6 @@
 [package]
 name = "uplink"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 publish = false
 default-run = "uplink"
@@ -24,9 +24,10 @@ image = { version = "0.25", default-features = false, features = ["png","jpeg","
 base64 = "0.23"
 uuid = { version = "1", features = ["v4"] }
 clipboard-win = "5.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde_json = "1"
 tempfile = "3"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation","Win32_Networking_WinSock","Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis","Win32_System_IO", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Security","Win32_Security_Cryptography", "Win32_System_Registry","Win32_System_Services", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_HiDpi", "Win32_UI_Controls","Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation","Win32_Networking_WinSock","Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis","Win32_System_IO", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Security","Win32_Security_Authorization","Win32_Security_Cryptography", "Win32_System_Registry","Win32_System_Services", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_HiDpi", "Win32_UI_Controls","Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse"] }
 qrcode = { version = "0.14.1", default-features = false, features = ["image"] }
 curl = "0.4"
 

@@ -55,6 +55,7 @@ pub struct Policy {
     pub qr: bool,
     pub password: Option<String>,
     pub avatar: String,
+    pub aliases: std::collections::BTreeMap<String, String>,
 }
 
 impl Policy {
@@ -86,11 +87,7 @@ impl Room {
             live.rows
                 .iter()
                 .map(|row| crate::peers::Peer {
-                    nick: if row.node == live.node {
-                        nick
-                    } else {
-                        &row.nick
-                    },
+                    nick: &row.nick,
                     ip: &row.ip,
                     own: row.node == live.node,
                     online: row.present || (row.node != live.node && row.ping_ms.is_some()),
@@ -99,6 +96,14 @@ impl Room {
                 .collect()
         } else {
             crate::peers::room_members(&self.url, nick)
+                .into_iter()
+                .map(|mut peer| {
+                    if let Some(alias) = self.policy.aliases.get(peer.ip) {
+                        peer.nick = alias;
+                    }
+                    peer
+                })
+                .collect()
         }
     }
     pub fn manages(&self) -> bool {
@@ -111,6 +116,44 @@ impl Room {
         (!self.creator_ip.is_empty() && self.creator_ip == self.own_ip)
             || self.policy.admins.iter().any(|ip| ip == &self.own_ip)
     }
+}
+
+pub fn rename_network_member(path: &Path, url: &str, ip: &str, name: &str) -> io::Result<()> {
+    let name = validated_name(name, 32)?;
+    let _guard = transport_lock(path)?;
+    let room = rooms(path)?.into_iter().next().filter(|room| room.url == url)
+        .ok_or_else(|| io::Error::other("The selected network has changed"))?;
+    if let Some(live) = room.live {
+        let member = live.rows.iter().find(|row| row.ip == ip)
+            .ok_or_else(|| io::Error::other("Participant is unavailable"))?;
+        live.rename_member(&member.node, name)?;
+        return update(path, |prefs| {
+            let rows = &mut prefs["live"][url];
+            if rows["session"] == live.session
+                && let Some(rows) = rows["rows"].as_array_mut()
+                && let Some(row) = rows.iter_mut().find(|row| row["node"] == member.node)
+            {
+                row["nick"] = name.into();
+            }
+            Ok(())
+        });
+    }
+    update(path, |prefs| {
+        let mut room = room_info(prefs, url);
+        let own = room.own_ip == ip;
+        let owner = room.creator_ip == room.own_ip;
+        let target_admin = room.policy.admins.iter().any(|admin| admin == ip);
+        if !own && (!room.manages() || ip == room.creator_ip || (target_admin && !owner)) {
+            return Err(io::Error::other("Network management permission required"));
+        }
+        if room.policy.removed.iter().any(|removed| removed == ip)
+            || !crate::peers::room_members(url, "").iter().any(|peer| peer.ip == ip)
+        {
+            return Err(io::Error::other("Participant is unavailable"));
+        }
+        room.policy.aliases.insert(ip.into(), name.into());
+        room.policy.store(prefs, url)
+    })
 }
 
 fn modify(

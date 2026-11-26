@@ -548,12 +548,12 @@ msgstr "Чтобы продолжить, нужно закрыть прилож�
 msgid "Local data removed."
 msgstr "Локальные данные удалены."
 
-msgid "Your networks and settings were kept."
-msgstr "Ваши сети и настройки сохранены."
+msgid "Your networks, settings and SSH keys were kept."
+msgstr "Ваши сети, настройки и SSH-ключи сохранены."
 
 
-msgid "Delete local data and saved networks"
-msgstr "Удалить настройки и сохранённые сети"
+msgid "Delete data, saved networks and SSH keys"
+msgstr "Удалить данные, сети и SSH-ключи"
 
 msgid "Could not finish"
 msgstr "Не удалось завершить операцию"
@@ -950,3 +950,150 @@ msgstr "Не удалось открыть установленный клиен
 msgctxt "native"
 msgid "Could not obtain the VPS SSH key. Check the address and SSH port."
 msgstr "Не удалось получить SSH-ключ сервера. Проверьте IP-адрес и порт SSH."
+
+msgid "Welcome to Uplink"
+msgstr "Добро пожаловать в Uplink"
+
+msgid "Enter a nickname. You can change it later in Settings."
+msgstr "Введите ник. Позже его можно будет изменить в настройках."
+
+msgid "Copy network address"
+msgstr "Скопировать адрес сети"
+
+msgid "Network actions"
+msgstr "Действия сети"
+
+msgid "Copy invitation link"
+msgstr "Скопировать ссылку-приглашение"
+
+msgid "Show login and password"
+msgstr "Показать логин и пароль"
+
+msgid "Show QR code"
+msgstr "Показать QR-код"
+
+msgid "Leave network"
+msgstr "Выйти из сети"
+
+msgid "Member actions for {}"
+msgstr "Действия участника {}"
+
+msgid "Edit network nickname"
+msgstr "Изменить ник в сети"
+
+msgid "Notifications"
+msgstr "Уведомления"
+
+msgid "Actions"
+msgstr "Действия"
+
+msgid "History"
+msgstr "История"
+
+msgid "Update available {}"
+msgstr "Доступно обновление {}"
+
+msgid "No notifications yet"
+msgstr "Событий пока нет"
+
+msgid "No pending actions"
+msgstr "Действий пока нет"
+
+msgid "SSH access request"
+msgstr "Запрос на SSH-доступ"
+
+msgid "{} is requesting SSH access to your PC."
+msgstr "{} запрашивает SSH-доступ к вашему ПК."
+
+msgid "Windows user"
+msgstr "Пользователь Windows"
+
+msgid "Access to Windows files and settings."
+msgstr "Доступ к файлам и настройкам Windows."
+
+msgid "Standard Windows user permissions."
+msgstr "Права обычного пользователя Windows."
+
+msgid "Expires"
+msgstr "Срок действия"
+
+msgid "No expiration"
+msgstr "Бессрочно"
+
+msgid "15 minutes"
+msgstr "15 минут"
+
+msgid "1 hour"
+msgstr "1 час"
+
+msgid "3 hours"
+msgstr "3 часа"
+
+msgid "24 hours"
+msgstr "24 часа"
+
+msgid "Deny"
+msgstr "Отклонить"
+
+msgid "Allow"
+msgstr "Разрешить"
+
+msgid "Incoming SSH request"
+msgstr "Входящий запрос на SSH-доступ"
+
+msgid "SSH request sent. Waiting for a response."
+msgstr "Запрос отправлен. Ожидаем решения."
+
+msgid "Review SSH request"
+msgstr "Просмотреть запрос на SSH-доступ"
+
+msgid "Cancel SSH request"
+msgstr "Отменить запрос"
+
+msgid "Request SSH access"
+msgstr "Запросить SSH-доступ"
+
+msgid "SSH request from {}"
+msgstr "Запрос на SSH-доступ от {}"
+
+msgid "SSH request declined · {}"
+msgstr "Запрос на SSH-доступ отклонён · {}"
+
+msgid "SSH request cancelled · {}"
+msgstr "Запрос на SSH-доступ отменён · {}"
+
+msgctxt "native"
+msgid "SSH access cannot be opened in this build."
+msgstr "В этой сборке SSH-доступ ещё нельзя открыть."
+
+msgctxt "native"
+msgid "This server does not support SSH requests."
+msgstr "Сервер не поддерживает запросы на SSH-доступ."
+
+msgctxt "native"
+msgid "Update this Uplink server to send SSH requests."
+msgstr "Обновите сервер Uplink, чтобы отправлять SSH-запросы."
+
+msgctxt "native"
+msgid "Install Windows OpenSSH Client to create Uplink SSH keys."
+msgstr "Для создания SSH-ключей Uplink установите клиент OpenSSH для Windows."
+
+msgctxt "native"
+msgid "Could not create an Uplink SSH key."
+msgstr "Не удалось создать SSH-ключ Uplink."
+
+msgctxt "native"
+msgid "Could not read the Uplink SSH key."
+msgstr "Не удалось прочитать SSH-ключ Uplink."
+
+msgctxt "native"
+msgid "Unexpected redirected Uplink SSH directory or key."
+msgstr "Папка или ключ SSH Uplink перенаправлены."
+
+msgctxt "native"
+msgid "The Uplink server returned an unexpected SSH request."
+msgstr "Сервер Uplink вернул данные другого SSH-запроса."
+
+msgctxt "native"
+msgid "An SSH request from this device already uses another key."
+msgstr "Для этого SSH-запроса уже используется другой ключ."

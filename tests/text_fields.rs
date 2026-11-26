@@ -107,10 +107,10 @@ fn open_language_list_allows_the_first_click_on_settings_and_switches() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let record = events.clone();
     ui.on_change_option(move |key, _| record.borrow_mut().push(key.to_string()));
-    click(&ui, 292., 318.);
-    click(&ui, 332., 133.);
+    click(&ui, 292., 172.);
+    click(&ui, 332., 304.);
     assert_eq!(*events.borrow(), ["autostart"]);
-    click(&ui, 292., 318.);
+    click(&ui, 292., 172.);
     click(&ui, 281., 28.);
     assert!(!ui.get_settings_open());
 }
@@ -135,14 +135,14 @@ fn saved_networks_can_be_switched_from_the_main_screen() {
     let selections = Rc::new(RefCell::new(Vec::new()));
     let record = selections.clone();
     ui.on_select_room(move |url| record.borrow_mut().push(url.to_string()));
-    click(&ui, 37., 174.);
+    click(&ui, 37., 120.);
     assert_eq!(*selections.borrow(), ["uplink://coop.example/rooms/coop"]);
     let submitted = Rc::new(RefCell::new(String::new()));
     let result = submitted.clone();
     ui.on_join_room(move |url| *result.borrow_mut() = url.to_string());
-    click(&ui, 37., 214.);
+    click(&ui, 37., 159.);
     assert!(ui.get_adding_network());
-    click(&ui, 37., 174.);
+    click(&ui, 37., 120.);
     assert!(
         !ui.get_adding_network(),
         "Clicking the backdrop dismisses the join form"
@@ -152,7 +152,7 @@ fn saved_networks_can_be_switched_from_the_main_screen() {
         1,
         "The backdrop covers the network rail"
     );
-    click(&ui, 37., 214.);
+    click(&ui, 37., 159.);
     key(&ui, "uplink://coop.example/rooms/coop");
     key(&ui, Key::Return);
     assert_eq!(
@@ -193,7 +193,7 @@ fn russian_paste_in_invitation_input() {
     let submitted = Rc::new(RefCell::new(String::new()));
     let result = submitted.clone();
     ui.on_join_room(move |url| *result.borrow_mut() = url.to_string());
-    click(&ui, 68., 174.);
+    click(&ui, 68., 116.);
     assert!(ui.get_adding_network());
     ui.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Control.into(),
@@ -207,69 +207,37 @@ fn russian_paste_in_invitation_input() {
 }
 
 #[test]
-fn only_the_pencil_starts_editing_at_the_end_of_the_nickname() {
-    let (ui, surface) = open();
+fn settings_nickname_starts_editing_at_the_end_and_escape_discards_changes() {
+    let (ui, _) = open();
+    ui.set_settings_open(true);
     let weak = ui.as_weak();
     ui.on_rename(move |nick| {
         let ui = weak.unwrap();
         ui.set_nickname(nick);
         ui.set_editing(false);
     });
-    let pencil_pixels = || {
-        let mut buffer = vec![slint::Rgb8Pixel::default(); 388 * 540];
-        surface.request_redraw();
-        surface.draw_if_needed(|r| {
-            r.render(&mut buffer, 388);
-        });
-        (68..85)
-            .flat_map(|y| (93..115).map(move |x| y * 388 + x))
-            .filter(|&index| buffer[index].r > 100)
-            .count()
-    };
-    let idle = pencil_pixels();
-    ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(56., 77.),
-    });
-    assert!(
-        pencil_pixels() > idle + 5,
-        "Наведение должно показать карандаш"
-    );
-    click(&ui, 56., 77.);
+    click(&ui, 80., 124.);
     assert!(!ui.get_editing());
-    ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(103., 77.),
-    });
-    click(&ui, 103., 77.);
+    click(&ui, 330., 124.);
     assert!(ui.get_editing());
     key(&ui, "Черновик");
     key(&ui, Key::Escape);
     assert!(!ui.get_editing());
     assert_eq!(ui.get_nickname(), "Ranazy");
 
-    ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(56., 77.),
-    });
-    click(&ui, 56., 77.);
-    assert!(!ui.get_editing());
-    ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(103., 77.),
-    });
-    click(&ui, 103., 77.);
-    ui.window().dispatch_event(WindowEvent::KeyPressed {
-        text: Key::Control.into(),
-    });
+    click(&ui, 252., 124.);
+    ui.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
     key(&ui, "М");
-    ui.window().dispatch_event(WindowEvent::KeyReleased {
-        text: Key::Control.into(),
-    });
+    ui.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
     key(&ui, Key::Return);
     assert_eq!(ui.get_nickname(), "Ranazyuplink://join/after-hours");
     assert!(!ui.get_editing());
 }
 
 #[test]
-fn clicking_outside_commits_once_and_preserves_the_clicked_control() {
+fn leaving_settings_saves_the_nickname_once_and_preserves_the_next_action() {
     let (ui, _) = open();
+    ui.set_settings_open(true);
     let saved = Rc::new(RefCell::new(Vec::new()));
     let saves = saved.clone();
     let weak = ui.as_weak();
@@ -283,70 +251,21 @@ fn clicking_outside_commits_once_and_preserves_the_clicked_control() {
     let joins = joined.clone();
     ui.on_join_room(move |link| joins.borrow_mut().push(link.to_string()));
 
-    click(&ui, 103., 77.);
+    click(&ui, 330., 124.);
     key(&ui, "1");
-    click(&ui, 360., 402.);
+    click(&ui, 35., 77.);
     assert_eq!(*saved.borrow(), ["Ranazy1"]);
     assert!(!ui.get_editing());
-    key(&ui, "X");
-    assert_eq!(ui.get_nickname(), "Ranazy1");
-
-    click(&ui, 108., 77.);
-    key(&ui, "2");
-    click(&ui, 68., 174.);
-    assert!(!ui.get_editing());
+    assert!(!ui.get_settings_open());
+    click(&ui, 68., 116.);
     assert!(ui.get_adding_network());
     key(&ui, "abc");
     key(&ui, Key::Return);
     assert_eq!(*joined.borrow(), ["abc"]);
-    key(&ui, Key::Escape);
-
-    click(&ui, 115., 77.);
-    key(&ui, "3");
-    click(&ui, 68., 174.);
-    assert!(ui.get_adding_network());
-    key(&ui, "second");
-    click(&ui, 335., 291.);
-    assert!(!ui.get_editing());
-    assert_eq!(*saved.borrow(), ["Ranazy1", "Ranazy12", "Ranazy123"]);
-    assert_eq!(*joined.borrow(), ["abc", "second"]);
 }
 
 #[test]
-fn clicking_room_content_or_title_commits_the_nickname() {
-    let (ui, _) = open();
-    ui.set_joined(true);
-    ui.set_members(slint::ModelRc::new(slint::VecModel::from(vec![
-        Member {
-            nick: "Ranazy".into(),
-            own: true,
-            ..Default::default()
-        },
-        Member {
-            nick: "Mira".into(),
-            creator: true,
-            ..Default::default()
-        },
-    ])));
-    let weak = ui.as_weak();
-    ui.on_rename(move |name| {
-        let ui = weak.unwrap();
-        ui.set_nickname(name);
-        ui.set_editing(false);
-    });
-    for (x, y) in [(55., 290.), (68., 29.), (40., 109.)] {
-        ui.set_nickname("Ranazy".into());
-        click(&ui, 103., 77.);
-        assert!(ui.get_editing());
-        key(&ui, "1");
-        click(&ui, x, y);
-        assert_eq!(ui.get_nickname(), "Ranazy1", "click at {x}, {y}");
-        assert!(!ui.get_editing());
-    }
-}
-
-#[test]
-fn only_creator_can_edit_room_title_and_click_away_to_save() {
+fn a_network_manager_can_edit_the_title_and_click_away_to_save() {
     let (ui, _) = open();
     ui.set_joined(true);
     ui.set_room_name("LAN".into());
@@ -360,10 +279,13 @@ fn only_creator_can_edit_room_title_and_click_away_to_save() {
         ui.set_room_name(value);
         ui.set_editing_room(false);
     });
-    click(&ui, 305., 132.);
+    click(&ui, 355., 77.);
+    click(&ui, 10., 430.);
     assert_eq!(net.get_panel(), "");
-    ui.set_is_creator(true);
-    click(&ui, 305., 132.);
+    net.set_manages(true);
+    net.set_owner(true);
+    click(&ui, 355., 77.);
+    click(&ui, 210., 147.);
     assert_eq!(net.get_panel(), "general");
     platform::update_timers_and_animations();
     let bounds = net.get_drop_bounds();
@@ -494,7 +416,7 @@ fn saved_network_password_can_be_revealed_again_without_resubmitting_it() {
 fn credentials_submit_server_name_and_secret_from_the_native_form() {
     let (ui, surface) = open();
     let net = ui.global::<NetworkUi>();
-    click(&ui, 68., 174.);
+    click(&ui, 68., 116.);
     assert!(ui.get_adding_network());
     click(&ui, 274., 253.);
     let args = Rc::new(RefCell::new(Vec::new()));
@@ -558,7 +480,7 @@ fn version_opens_release_notes_without_starting_download() {
 #[test]
 fn closing_join_dialog_restores_the_join_button() {
     let (ui, _) = open();
-    click(&ui, 100., 169.);
+    click(&ui, 100., 116.);
     assert!(ui.get_adding_network());
     key(&ui, Key::Escape);
     assert!(!ui.get_adding_network());

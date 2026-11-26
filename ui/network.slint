@@ -35,6 +35,11 @@ export global NetworkUi {
     callback action(string,string);
     callback clear-draft();
     callback request-link();
+    callback copy-invitation();
+    in-out property <bool> copying-link;
+    in-out property <bool> copied-link;
+    in-out property <int> copy-result;
+    in-out property <bool> invite-method-fixed;
     callback clipboard(string)->bool;
     callback pan(float,float);
     callback scale(float);
@@ -54,10 +59,16 @@ export global NetworkUi {
     }
     callback login(string,string,string);
     public function open-invite() {
+        self.show-invite(self.link-on?"link":self.qr-on?"qr":self.password-on?"password":"");
+        self.invite-method-fixed = false;
+    }
+    public function show-invite(method: string) {
         self.error="";
-        self.method=self.link-on?"link":self.qr-on?"qr":self.password-on?"password":"";
+        self.method=method;
+        self.invite-method-fixed = true;
         self.modal="invite";
-        self.request-link();
+        if method == "password" { self.load-password(); }
+        if method == "link" || method == "qr" { self.request-link(); }
     }
     public function close-modal(){if self.modal=="crop" {self.clear-draft();} self.modal="";self.error="";self.target="";}
 }

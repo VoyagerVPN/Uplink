@@ -75,9 +75,14 @@ def route(method, path, data):
         return 200, {**profile, "endpoint": os.environ["UPLINK_UDP_ENDPOINT"]}
     if path == "/v1/leave":
         return 200, api.leave(data.get("session"))
+    if path == "/v1/ssh/request":
+        return 200, api.request_ssh(data.get("session"), data.get("recipient"), data.get("public_key"))
+    if path == "/v1/ssh/respond":
+        return 200, api.respond_ssh(data.get("session"), data.get("id"), data.get("decision"))
     if path == "/v1/sync":
         session, network = data.get("session"), data.get("network")
-        snapshot = api.sync(session, data.get("nick"), data.get("avatar_revision"), network)
+        snapshot = api.sync(session, data.get("nick"), data.get("avatar_revision"), network,
+                            include_ssh=data.get("ssh_requests") is True)
         expiry = data.get("credential_expires_at")
         if network == snapshot["id"] and type(expiry) is int and 0 <= expiry <= api.now():
             # profile повторно проверяет членство под той же блокировкой, что и отзыв.
@@ -85,6 +90,8 @@ def route(method, path, data):
         return 200, snapshot
     if path == "/v1/avatar":
         return 200, api.manage(data.get("session"), "avatar", data.get("value"))
+    if path == "/v1/nickname":
+        return 200, api.rename_member(data.get("session"), data.get("node"), data.get("nick"))
     if path == "/v1/manage":
         return 200, api.manage(data.get("session"), data.get("action"), data.get("value"))
     if path == "/v1/ping":
@@ -97,8 +104,9 @@ def route(method, path, data):
 # Из журнала нельзя восстановить билет. Метка действует до перезапуска процесса.
 _LOG_KEY = os.urandom(32)
 _STAGES = {"/v1/" + s: s for s in (
-    "login", "bootstrap", "redeem", "profile", "sync", "share", "avatar", "manage", "ping", "leave"
+    "login", "bootstrap", "redeem", "profile", "sync", "share", "avatar", "nickname", "manage", "ping", "leave"
 )}
+_STAGES.update({"/v1/ssh/request": "ssh_request", "/v1/ssh/respond": "ssh_respond"})
 _REASONS = {msg: msg.lower().replace(" ", "_") for msg in (
     "Invalid network credentials", "Invalid credential", "Invalid or expired invitation",
     "Invitation already used", "Invitations are disabled", "Waiting for network join",
@@ -107,7 +115,9 @@ _REASONS = {msg: msg.lower().replace(" ", "_") for msg in (
     "Network deleted", "Invalid session", "Invalid membership",
     "Too many login attempts", "Invalid nickname", "Invalid node",
     "Invalid request", "Invalid body size", "Expected a JSON object", "Local service unavailable",
-    "Client access only", "Unknown private network",
+    "Client access only", "Unknown private network", "Invalid participant", "Unknown participant",
+    "Invalid SSH request response", "Unknown SSH request", "SSH request already closed",
+    "Invalid SSH public key", "SSH request already has a key",
     "Network management permission required", "Owner permission required",
 )}
 

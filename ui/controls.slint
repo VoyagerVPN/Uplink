@@ -38,6 +38,7 @@ export component Action inherits Rectangle {
     in property <bool> filled;
     in property <bool> borderless-focus;
     in property <bool> selected;
+    in property <color> selected-label-color: #bfec70;
     in property <bool> title-button;
     in property <bool> icon-only;
     in property <image> glyph;
@@ -63,15 +64,15 @@ export component Action inherits Rectangle {
     in property <bool> primary;
     in property <bool> danger;
     in property <bool> align-start;
-    if leading-icon:Image{x:10px;width:15px;height:15px;source:root.glyph;colorize:root.primary?#263415:#c8cdd3;}
+    if leading-icon:Image{x:root.align-start?8px:10px;width:15px;height:15px;source:root.glyph;colorize:root.primary?#263415:root.glyph-color!=transparent?root.glyph-color:root.danger?#f2a099:#c8cdd3;}
     in property <angle> glyph-rotation;
     if icon-only: Image { width: root.glyph-size; height: root.glyph-size; image-fit: contain; source: root.glyph; transform-rotation: root.glyph-rotation; opacity: touch.pressed ? 0.7 : 1; colorize: root.glyph-color; }
     word := Label {
         visible: !root.icon-only; text: root.caption;
-        x: root.leading-icon?20px:root.align-start?10px:root.caption-inset;
+        x: root.leading-icon?(root.align-start?29px:20px):root.align-start?10px:root.caption-inset;
         width: root.width - self.x - (root.caption-inset > 0px ? 26px : 0px);
         horizontal-alignment: root.caption-inset > 0px || root.align-start ? left : center;
-        color: root.danger && root.primary ? #341010 : root.danger?#f2a099:root.primary?#263415:root.selected ? #bfec70 : touch.has-hover ? #ffffff : #e1e3e6;
+        color: root.danger && root.primary ? #341010 : root.danger?#f2a099:root.primary?#263415:touch.has-hover?#ffffff:root.selected?root.selected-label-color:#e1e3e6;
         font-size: root.title-button ? 19px : 12px;
     }
     if icon-only && !root.hide-tip: Tooltip { HintCard { message: root.caption; } }
@@ -92,6 +93,7 @@ export component EditableTitle inherits Rectangle {
     in property <string> action-label;
     in property <bool> editable: true;
     in property <bool> show-pencil;
+    in property <bool> settings-control;
     in property <length> type-size: 16px;
     in-out property <bool> editing;
     callback changed-mode();
@@ -106,13 +108,14 @@ export component EditableTitle inherits Rectangle {
     }
     if !root.editing: Rectangle {
         name := Label {
-            x: 0px; width: min(self.preferred-width, parent.width - (root.editable ? 28px : 0px));
+            x: root.settings-control ? 12px : 0px;
+            width: min(self.preferred-width, parent.width - self.x - (root.editable ? 28px : 0px));
             height: parent.height; horizontal-alignment: left;
-            text: root.value; font-size: root.type-size; font-weight: 600;
+            text: root.value; font-size: root.type-size; font-weight: root.settings-control ? 400 : 600;
             name-hover := TouchArea { x: 0px; width: name.width; }
         }
         if root.editable: pencil := ButtonFocus {
-            x: name.width; width: 28px; height: parent.height;
+            x: root.settings-control ? 0px : name.width; width: root.settings-control ? parent.width : 28px; height: parent.height;
             accessible-role: button; accessible-label: root.action-label + " " + root.value;
             accessible-action-default => { root.begin-edit(); }
             key-pressed(event) => {
@@ -125,6 +128,7 @@ export component EditableTitle inherits Rectangle {
             }
             Image {
                 visible: root.show-pencil || name-hover.has-hover || pencil-hover.has-hover || pencil.show-focus;
+                x: root.settings-control ? parent.width - 23px : (parent.width - self.width) / 2;
                 width: 15px; height: 15px; source: @image-url("../assets/icon/pencil.svg");
             }
             pencil-hover := TouchArea {
@@ -136,8 +140,8 @@ export component EditableTitle inherits Rectangle {
         }
     }
     field := TextField {
-        x: -6px; width: parent.width + 6px;
-        visible: root.editing; inline: true; field-name: root.field-name; type-size: root.type-size;
+        x: root.settings-control ? 0px : -6px; width: parent.width - self.x;
+        visible: root.editing; inline: !root.settings-control; clearable: false; field-name: root.field-name; type-size: root.type-size;
         submit(value) => { root.save(value); }
         cancel => { root.editing = false; root.changed-mode(); }
         blurred => { if root.editing { root.save(field.text); } }
@@ -225,6 +229,7 @@ export component DialogTrigger inherits Action {
 export component DialogScroll inherits Rectangle {
     clip: true;
     in property <length> height-limit: 260px;
+    in property <bool> reserve-gutter: true;
     preferred-height: min(root.height-limit, items.preferred-height);
     height: self.preferred-height;
     property <length> overflow: max(0px, view.content-height - view.height);
@@ -245,7 +250,7 @@ export component DialogScroll inherits Rectangle {
         border-radius: 4px; border-width: 1px; border-color: #8c929a;
     }
     view := Flickable {
-        x: 0; width: parent.width - 16px; height: parent.height;
+        x: 0; width: parent.width - (root.reserve-gutter ? 16px : 0px); height: parent.height;
         content-width: self.width;
         content-height: items.preferred-height;
         items := VerticalLayout {
@@ -253,7 +258,7 @@ export component DialogScroll inherits Rectangle {
             @children
         }
     }
-    if root.overflow > 0px: track := TouchArea {
+    if root.reserve-gutter && root.overflow > 0px: track := TouchArea {
         x: parent.width - self.width; width: 12px; height: parent.height;
         property <length> grab-offset;
         property <length> travel: self.height - thumb.height;
