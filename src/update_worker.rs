@@ -41,7 +41,7 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
                 }
                 if let (Some(r), Some(p)) = (&release, &package) {
                     publish(&mut state, Phase::Restarting);
-                    if updates::Release::install(r, p).is_ok() {
+                    if updates::Release::install(r, p, &profile).is_ok() {
                         unsafe { PostThreadMessageW(owner, crate::tray::QUIT, 0, 0) };
                         break;
                     }

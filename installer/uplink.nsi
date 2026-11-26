@@ -33,6 +33,30 @@ Var entry
 Var search
 Var marker
 Var folder
+Var setupStage
+
+; Журнал Windows доступен и обычному клиенту, и системной части установщика.
+!macro setupEvent stage result details
+    Push $7
+    Push $8
+    Push $9
+    System::Call 'advapi32::RegisterEventSourceW(p 0, w "Uplink Setup") p.r7'
+    ${If} $7 != 0
+        System::Call '*(&w256 "product=${PRODUCT} version=${VERSION} stage=${stage} result=${result} ${details}") p.r8'
+        System::Call '*(p r8) p.r9'
+        !if "${result}" == "failed"
+            System::Call 'advapi32::ReportEventW(p r7, i 1, i 0, i 1000, p 0, i 1, i 0, p r9, p 0)'
+        !else
+            System::Call 'advapi32::ReportEventW(p r7, i 4, i 0, i 1000, p 0, i 1, i 0, p r9, p 0)'
+        !endif
+        System::Free $9
+        System::Free $8
+        System::Call 'advapi32::DeregisterEventSource(p r7)'
+    ${EndIf}
+    Pop $9
+    Pop $8
+    Pop $7
+!macroend
 
 !macro osinit
     SetShellVarContext all
@@ -141,6 +165,7 @@ backend:
     UserInfo::GetAccountType
     Pop $1
     StrCmp $1 "Admin" elevated
+    !insertmacro setupEvent "machine_privileges" "failed" "exit=2"
     SetErrorLevel 2
     Quit
 caller:
@@ -150,6 +175,7 @@ caller:
     Call DetectInstallMode
     Pop $1
     StrCmp $1 "update" callerUpdate
+    !insertmacro setupEvent "client_version_check" "failed" "exit=28"
     SetErrorLevel 28
     Quit
 callerUpdate:
@@ -167,15 +193,47 @@ callerReady:
 requestElevation:
     ExecShellWait "runas" "$EXEPATH" "$2" SW_HIDE $1
 machineResult:
-    IfErrors 0 +2
-    StrCpy $1 2
-    StrCmp $1 0 0 clientDone
+    ${If} ${Errors}
+        !insertmacro setupEvent "machine_launch" "failed" "exit=2"
+        StrCpy $1 2
+        Goto clientDone
+    ${EndIf}
+    ${If} $1 != 0
+        !insertmacro setupEvent "machine_install" "failed" "exit=$1"
+        Goto clientDone
+    ${EndIf}
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "client-location.ps1"
     nsExec::ExecToStack '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\client-location.ps1" Install "${PRODUCT}" "$clientRoot" "${TAG}"'
     Pop $1
     Pop $2
+    ${If} $1 >= 65536
+        IntOp $3 $1 >> 16
+        IntOp $4 $1 & 65535
+        ${Switch} $3
+            ${Case} 1
+                StrCpy $setupStage "client_package"
+                ${Break}
+            ${Case} 2
+                StrCpy $setupStage "client_files"
+                ${Break}
+            ${Case} 3
+                StrCpy $setupStage "client_registration"
+                ${Break}
+            ${Case} 4
+                StrCpy $setupStage "client_shortcut"
+                ${Break}
+            ${Default}
+                StrCpy $setupStage "client_location"
+        ${EndSwitch}
+        !insertmacro setupEvent "$setupStage" "failed" "exit=1 error=$4"
+        StrCpy $1 1
+    ${ElseIf} $1 != 0
+        !insertmacro setupEvent "client_location" "failed" "exit=$1"
+    ${Else}
+        !insertmacro setupEvent "client_location" "ok" "exit=0"
+    ${EndIf}
 clientDone:
     SetErrorLevel $1
     Quit
@@ -197,16 +255,19 @@ elevated:
             Quit
         ${EndIf}
     ${EndIf}
+    !insertmacro setupEvent "machine_version_check" "failed" "exit=28"
     SetErrorLevel 28
     Quit
 normalInstall:
 FunctionEnd
 
 Section
+    StrCpy $setupStage "machine_paths"
     ReadRegStr $0 HKLM "${PROTO}" ""
     ReadRegStr $oldCommand HKLM "${PROTO}\shell\open\command" ""
     ${If} $0 != ""
     ${AndIf} $0 != "URL:Uplink Invitation"
+        !insertmacro setupEvent "machine_protocol" "failed" "exit=21"
         SetErrorLevel 21
         Quit
     ${EndIf}
@@ -216,6 +277,7 @@ Section
     !insertmacro regularDirectory "$INSTDIR" failed
     StrLen $0 "$INSTDIR\uplink-network-service.exe"
     ${If} $0 >= 260
+        !insertmacro setupEvent "$setupStage" "failed" "exit=2"
         SetErrorLevel 2
         Quit
     ${EndIf}
@@ -236,6 +298,7 @@ Section
     !insertmacro checkFile "$INSTDIR\uplink.exe"
     !insertmacro checkFile "$INSTDIR\uplink-window.exe"
     !insertmacro checkFile "$INSTDIR\uplinkctl.exe"
+    StrCpy $setupStage "machine_files"
     ClearErrors
     SetOutPath "$INSTDIR"
     ; Содержимое каждой версии адресуется хешем всего пакета.
@@ -263,8 +326,12 @@ Section
     nsExec::ExecToStack '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\manage-service.ps1" Install "${PRODUCT}" "${TAG}"'
     Pop $0
     Pop $2
-    StrCmp $0 0 +2
-    Goto failed
+    ${If} $0 != 0
+        !insertmacro setupEvent "machine_service" "failed" "exit=2 helper_exit=$0"
+        SetErrorLevel 2
+        Quit
+    ${EndIf}
+    StrCpy $setupStage "machine_registration"
     CreateShortCut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\uplink.exe"
     WriteRegStr HKLM "${PROTO}" "" "URL:Uplink Invitation"
     WriteRegStr HKLM "${PROTO}" "URL Protocol" ""
@@ -283,12 +350,15 @@ Section
     WriteRegDWORD HKLM "${ARP}" "NoRepair" 1
     IfErrors failed
     System::Call 'shell32::SHChangeNotify(i 0x08000000,i 0,p 0,p 0)'
+    !insertmacro setupEvent "machine_install" "ok" "exit=0"
     SetErrorLevel 0
     Goto done
 locked:
+    !insertmacro setupEvent "machine_files" "failed" "exit=22"
     SetErrorLevel 22
     Quit
 failed:
+    !insertmacro setupEvent "$setupStage" "failed" "exit=2"
     SetErrorLevel 2
 done:
 SectionEnd

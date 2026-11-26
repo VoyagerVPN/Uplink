@@ -3,6 +3,13 @@ param([Parameter(Mandatory)][ValidateSet('Install','Remove')][string]$Action,
       [string]$Destination, [ValidatePattern('^[0-9A-F]{20}$')][string]$Tag)
 $ErrorActionPreference='Stop'
 $env:PSModulePath=Join-Path $PSHOME 'Modules'
+$installStep=1
+trap {
+    if ($Action -ne 'Install') {break}
+    # Старшие биты обозначают этап, младшие содержат код исключения без текста и путей.
+    $code=$_.Exception.GetBaseException().HResult -band 65535
+    exit (($installStep -shl 16) -bor $code)
+}
 $key="HKCU:\Software\$Product\Installer"
 $arp="HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$Product"
 $scheme=if ($Product -eq 'Uplink') {'uplink'} else {$Product}
@@ -61,6 +68,7 @@ if ($Action -eq 'Remove') {
 $machine=Get-ItemProperty -LiteralPath $arp
 $source=$machine.InstallLocation
 if ([IO.Path]::GetFileName($source) -cne $Tag -or !(Package-Marker $source)) {throw 'Incomplete system package'}
+$installStep=2
 $root=[IO.Path]::GetFullPath($Destination).TrimEnd('\')
 if ($root -notmatch '^[A-Za-z]:\\' -or $root.StartsWith($machine.PackageRoot+'\',[StringComparison]::OrdinalIgnoreCase)) {throw 'Invalid installation folder'}
 $dir=$source
@@ -93,6 +101,7 @@ if ($custom) {
 }
 $exe=Join-Path $dir 'uplink.exe'
 if (!$state -and !$custom -and !$hook -and !$legacy) {return}
+$installStep=3
 if (!(Test-Path -LiteralPath $key)) {New-Item -Path $key -Force | Out-Null}
 if ($custom) {
     $history=@(@($state.Packages) + $dir | Where-Object {$_} | Select-Object -Unique)
@@ -116,11 +125,13 @@ if (!$command -or $command -in @($owned | ForEach-Object {'"'+$_+'" "%1"'})) {
 if ($autostart -and $autostart -in @($owned | ForEach-Object {'"'+$_+'" --background'})) {
     Set-ItemProperty -LiteralPath $runKey -Name $Product -Value ('"'+$exe+'" --background')
 }
+$installStep=4
 $shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut($link)
 $shortcut.TargetPath=$exe
 $shortcut.WorkingDirectory=$dir
 $shortcut.Save()
 if ($legacy) {
+    $installStep=3
     # Апдейтер 0.2.0 сверяет хеш и запускает новый клиент по старой записи HKCU.
     New-ItemProperty -LiteralPath $legacyPath -Name SystemComponent -PropertyType DWord -Value 1 -Force | Out-Null
     New-ItemProperty -LiteralPath $legacyPath -Name UplinkMigrated -PropertyType DWord -Value 1 -Force | Out-Null

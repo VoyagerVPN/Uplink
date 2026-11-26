@@ -240,24 +240,55 @@ impl Release {
         Ok(Package { path })
     }
 
-    pub fn install(&self, package: &Package) -> io::Result<()> {
+    pub fn install(&self, package: &Package, profile: &Path) -> io::Result<()> {
         let path: &Path = package.path.as_ref();
-        let _verified = locked(path, &self.sha256)?;
-        if !Command::new(path)
-            .args(["/S", "/UPLINKUPDATE"])
-            .creation_flags(0x08000000)
-            .status()?
-            .success()
-        {
-            return Err(io::Error::other("Uplink Setup failed"));
+        let record = |stage, fields: std::fmt::Arguments<'_>| {
+            crate::settings::diagnostics::update(
+                profile,
+                format_args!(
+                    "version={} target={} stage={stage} {fields}",
+                    env!("CARGO_PKG_VERSION"),
+                    self.version
+                ),
+            );
+        };
+        let mut stage = "verify_installer";
+        let mut installer_exit = None;
+        record(stage, format_args!("result=started"));
+        let result: io::Result<()> = (|| {
+            let _verified = locked(path, &self.sha256)?;
+            stage = "run_installer";
+            record(stage, format_args!("result=started"));
+            let status = Command::new(path)
+                .args(["/S", "/UPLINKUPDATE"])
+                .creation_flags(0x08000000)
+                .status()?;
+            installer_exit = status.code();
+            if !status.success() {
+                return Err(io::Error::other("Uplink Setup failed"));
+            }
+            stage = "locate_installed_client";
+            let exe = installed_client("Uplink")?;
+            stage = "verify_installed_client";
+            let _client = locked(&exe, &self.client_sha256)?;
+            stage = "launch_installed_client";
+            Command::new(exe)
+                .arg("--after-update")
+                .arg(std::process::id().to_string())
+                .spawn()?;
+            Ok(())
+        })();
+        let exit = installer_exit.map_or_else(String::new, |code| format!(" installer_exit={code}"));
+        if let Err(error) = &result {
+            let kind = error.kind();
+            let win32 = error
+                .raw_os_error()
+                .map_or_else(String::new, |code| format!(" win32={code}"));
+            record(stage, format_args!("result=failed kind={kind:?}{win32}{exit}"));
+        } else {
+            record(stage, format_args!("result=ok{exit}"));
         }
-        let exe = installed_client("Uplink")?;
-        let _client = locked(&exe, &self.client_sha256)?;
-        Command::new(exe)
-            .arg("--after-update")
-            .arg(std::process::id().to_string())
-            .spawn()?;
-        Ok(())
+        result
     }
 }
 pub fn installed_client(product: &str) -> io::Result<PathBuf> {
@@ -382,6 +413,37 @@ mod tests {
         drop(guard);
         fs::write(&path, b"rewritten").unwrap();
         assert!(locked(&path, &expected).is_err());
+    }
+
+    #[test]
+    fn an_installer_that_cannot_start_records_the_windows_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("prefs.json");
+        let payload = b"not a Windows executable";
+        let mut file = tempfile::Builder::new()
+            .suffix(".exe")
+            .tempfile_in(dir.path())
+            .unwrap();
+        file.write_all(payload).unwrap();
+        let package = Package {
+            path: file.into_temp_path(),
+        };
+        let release = Release {
+            product: REPO.to_owned(),
+            version: "0.3.0".to_owned(),
+            size: payload.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(payload)),
+            client_sha256: "0".repeat(64),
+            notes: String::new(),
+        };
+
+        let error = release.install(&package, &profile).unwrap_err();
+        let code = error.raw_os_error().unwrap();
+        assert!(matches!(code, 193 | 216));
+        let log = fs::read_to_string(dir.path().join("update.log")).unwrap();
+        assert!(log.contains("target=0.3.0 stage=run_installer result=failed"));
+        assert!(log.contains(&format!("win32={code}")));
+        assert!(!log.contains(&dir.path().display().to_string()));
     }
 
     #[test]

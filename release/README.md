@@ -19,3 +19,9 @@ After pushing the reviewed sources, run `./release/draft.ps1 -Version X.Y.Z` on 
 Show the owner the draft link, exact English notes, version, target commit and installer SHA-256. Obtain explicit approval **for each release** before publishing. A change to the package or the notes requires a new review and signature. No push, tag, build or workflow publishes a release automatically.
 
 The original publisher key resides in the current user's Microsoft Software Key Storage Provider under `VoyagerVPN.Uplink.Release.v1`. It is non-exportable. Before retiring this Windows profile, ship a client that trusts a replacement key while the current key is still available.
+
+## Diagnose an update failure
+
+The installer writes its result, version, stage, and available error code to the Windows Application log under `Uplink Setup` (event ID 1000). This works when an older Uplink client launches the installer. Read the event data for the diagnostic line.
+
+The Uplink client also writes an `update.log` beside its profile. This includes installer launch, process exit, and failures locating, verifying or launching the new client. Both logs omit installer paths and credentials.

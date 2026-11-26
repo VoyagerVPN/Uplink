@@ -47,14 +47,19 @@ pub(crate) fn failure(
 }
 
 pub(super) fn record(path: &Path, fields: std::fmt::Arguments<'_>) {
+    write_record(&path.with_file_name("transport.log"), fields);
+}
+
+pub(crate) fn update(path: &Path, fields: std::fmt::Arguments<'_>) {
+    write_record(&path.with_file_name("update.log"), fields);
+}
+
+fn write_record(path: &Path, fields: std::fmt::Arguments<'_>) {
     let unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let _ = append(
-        &path.with_file_name("transport.log"),
-        &format!("{unix_ms} {fields}\n"),
-    );
+    let _ = append(path, &format!("{unix_ms} {fields}\n"));
 }
 
 #[cfg(test)]
