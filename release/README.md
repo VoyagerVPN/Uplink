@@ -6,7 +6,7 @@ Write release notes in English for people who use Uplink. Group changes by what 
 
 Starting with 0.1.2, maintain one file per version in `release/notes/`. Add an entry when a change is ready to ship. The GitHub release and the in-app update dialog use the same approved text from this file.
 
-Group entries by where people will notice the change. Use `## 🖥️ UI` for windows, dialogs and tray controls, `## 🌐 Net` for joining, invitations and connections, and `## 🛠️ For server owners` for operating an instance. Always keep the category order UI → Net → For server owners. Omit empty sections and put the most important entry first within each section.
+Group entries by where people will notice the change. Use `## 🧩 Features` for major capabilities that give people a new way to use Uplink, `## 🖥️ UI` for windows, dialogs and tray controls, `## 🌐 Net` for joining, invitations and connections, and `## 🛠️ For server owners` for operating an instance. Always keep the category order Features → UI → Net → For server owners. Omit empty sections and put the most important entry first within each section.
 
 Start each entry with **✦ New** for a new capability, **↻ Changed** for a change in existing behavior, or **✓ Fixed** for a resolved problem. Follow the label with an em dash and one short sentence. Put each entry on one line with a blank line between entries. The symbol serves as its bullet in both GitHub and the app.
 
