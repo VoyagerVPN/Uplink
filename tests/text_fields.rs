@@ -478,6 +478,52 @@ fn version_opens_release_notes_without_starting_download() {
 }
 
 #[test]
+fn update_warning_explains_the_failure_and_waits_for_explicit_retry() {
+    let (ui, surface) = open();
+    slint::select_bundled_translation("ru").unwrap();
+    let update = ui.global::<UpdateUi>();
+    update.set_version("0.3.0".into());
+    update.set_target("0.3.1".into());
+    update.set_phase(UpdatePhase::InstallFailed);
+    update.set_failure(UpdateFailure::Permission);
+    let checks = Rc::new(RefCell::new(0));
+    let received = checks.clone();
+    let weak = ui.as_weak();
+    update.on_check(move || {
+        *received.borrow_mut() += 1;
+        weak.upgrade().unwrap().global::<UpdateUi>().set_phase(UpdatePhase::Checking);
+    });
+    click(&ui, 148., 29.);
+    assert!(update.get_dialog_open());
+    assert_eq!(*checks.borrow(), 0);
+    assert!(update.get_failure_detail().contains("подтвердите запрос Windows"));
+
+    let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+    surface.request_redraw();
+    surface.draw_if_needed(|renderer| {
+        renderer.render(&mut pixels, 388);
+    });
+    if let Some(output) = std::env::var_os("UPLINK_UPDATE_ERROR_CAPTURE") {
+        let bytes: Vec<_> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(output, &bytes, 388, 540, image::ColorType::Rgb8).unwrap();
+    }
+    let row = pixels.chunks(388).position(|row| {
+        row.iter().filter(|p| (p.r, p.g, p.b) == (191, 236, 112)).count() > 35
+    }).unwrap();
+    click(&ui, 315., row as f32 + 8.);
+    assert_eq!(*checks.borrow(), 1);
+    assert!(update.get_dialog_open());
+    assert_eq!(update.get_phase(), UpdatePhase::Checking);
+
+    update.set_phase(UpdatePhase::Offline);
+    update.set_failure(UpdateFailure::Download);
+    assert!(update.get_failure_detail().contains("Загрузка прервалась"));
+    platform::update_timers_and_animations();
+    key(&ui, Key::Escape);
+    assert!(!update.get_dialog_open());
+}
+
+#[test]
 fn closing_join_dialog_restores_the_join_button() {
     let (ui, _) = open();
     click(&ui, 100., 116.);
@@ -515,6 +561,15 @@ fn vps_wizard_forwards_provider_proxy_settings() {
 
 #[test]
 fn a_network_owner_can_confirm_a_server_update_from_the_network_menu() {
+    run_server_upgrade_from_network_menu(true);
+}
+
+#[test]
+fn a_legacy_server_only_asks_for_ssh_access_when_the_owner_sets_it_up() {
+    run_server_upgrade_from_network_menu(false);
+}
+
+fn run_server_upgrade_from_network_menu(saved_access: bool) {
     let (ui, surface) = open();
     slint::select_bundled_translation("en").unwrap();
     ui.set_joined(true);
@@ -544,9 +599,17 @@ fn a_network_owner_can_confirm_a_server_update_from_the_network_menu() {
     network.set_bundled_server_revision(3);
     let wizard = ui.global::<VpsUi>();
     wizard.on_check(|field, value| uplink::vps::field_error(&field, &value).into());
+    wizard.on_has_upgrade_access(move |server| {
+        assert_eq!(server, "lan.example");
+        saved_access
+    });
     let calls = Rc::new(RefCell::new(Vec::new()));
     let received = calls.clone();
-    wizard.on_upgrade(move |server, ip, port, user, password, identity| {
+    wizard.on_upgrade(move |server| {
+        received.borrow_mut().push([server.to_string(), String::new(), String::new(), String::new(), String::new(), String::new()]);
+    });
+    let received = calls.clone();
+    wizard.on_upgrade_with_access(move |server, ip, port, user, password, identity| {
         received.borrow_mut().push([server, ip, port, user, password, identity].map(|s| s.to_string()));
     });
     wizard.on_install(|_, _, _, _, _, _, _, _, _| panic!("The update must not create a network"));
@@ -562,39 +625,48 @@ fn a_network_owner_can_confirm_a_server_update_from_the_network_menu() {
             image::save_buffer(path, &bytes, 388, height, image::ColorType::Rgb8).unwrap();
         }
     };
-    capture("network.png");
+    if saved_access { capture("network.png"); }
     click(&ui, 355., 74.);
-    capture("network-menu.png");
+    if saved_access { capture("network-menu.png"); }
     ui.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(172., 175.) });
     click(&ui, 172., 175.);
     assert!(ui.get_creating_network(), "Update server opens the VPS dialog");
-    capture("access.png");
-    let primary = || {
+    capture(if saved_access { "confirm.png" } else { "legacy-confirm.png" });
+    let primary_y = || {
         let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
         surface.request_redraw();
         surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
         let rows = pixels.chunks(388).enumerate().filter(|(_, row)| {
             row.iter().filter(|p| p.g > 185 && p.r > 130 && p.b < 150).count() > 55
         }).map(|(y, _)| y).collect::<Vec<_>>();
-        click(&ui, 194., rows[rows.len() / 2] as f32);
+        rows[rows.len() / 2] as f32
     };
-    primary();
-    key(&ui, "192.0.2.10");
-    key(&ui, Key::Return);
-    key(&ui, "root");
-    key(&ui, Key::Return);
-    key(&ui, "fixture");
-    key(&ui, Key::Return);
+    let primary = || click(&ui, 194., primary_y());
     assert!(calls.borrow().is_empty(), "The user confirms downtime before the update starts");
-    capture("confirm.png");
     primary();
-    assert_eq!(calls.borrow().as_slice(), [["lan.example", "192.0.2.10", "22", "root", "fixture", ""]]);
+    if saved_access {
+        assert_eq!(calls.borrow().as_slice(), [["lan.example", "", "", "", "", ""]]);
+    } else {
+        assert!(calls.borrow().is_empty());
+        capture("legacy-access.png");
+        let before_validation = primary_y();
+        primary();
+        capture("legacy-validation.png");
+        assert_eq!(primary_y(), before_validation, "Validation must keep the form in place");
+        key(&ui, "192.0.2.10");
+        key(&ui, Key::Return);
+        key(&ui, "root");
+        key(&ui, Key::Return);
+        key(&ui, "fixture");
+        key(&ui, Key::Return);
+        assert_eq!(calls.borrow().as_slice(), [["lan.example", "192.0.2.10", "22", "root", "fixture", ""]]);
+    }
     key(&ui, Key::Escape);
     assert!(ui.get_creating_network(), "The update remains visible while the VPS works");
     wizard.set_upgrade_result("restored".into());
     wizard.set_failure("Fixture failure".into());
     platform::update_timers_and_animations();
-    capture("restored.png");
+    if saved_access { capture("restored.png"); }
     key(&ui, Key::Escape);
     assert!(!ui.get_creating_network(), "A completed result can be dismissed");
 }

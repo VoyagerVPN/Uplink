@@ -1220,6 +1220,7 @@ pub(crate) fn finish_creation(
     path: &Path,
     scope: &str,
     own: &crate::transport::Membership,
+    sealed_access: &str,
 ) -> io::Result<()> {
     update(path, |prefs| {
         if let Some(live) = prefs["live"].get_mut(own.key()) {
@@ -1234,7 +1235,33 @@ pub(crate) fn finish_creation(
         if prefs["creating"][scope] == own.id {
             prefs["creating"].as_object_mut().unwrap().remove(scope);
         }
+        prefs["vps_access"][own.host.to_ascii_lowercase()] = sealed_access.into();
         select_url(prefs, &own.key(), false)
+    })
+}
+
+fn vps_access_context(host: &str) -> String {
+    format!("uplink:vps-access:{}", host.to_ascii_lowercase())
+}
+
+pub(crate) fn seal_vps_access(host: &str, access: &str) -> io::Result<String> {
+    password::protect(&vps_access_context(host), access)
+        .map_err(|_| io::Error::other("Could not save SSH access on this PC."))
+}
+
+pub(crate) fn load_vps_access(path: &Path, host: &str) -> io::Result<String> {
+    let prefs = read_raw(path)?;
+    let sealed = prefs["vps_access"][host.to_ascii_lowercase()]
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "SSH access is not saved on this PC."))?;
+    password::unprotect(&vps_access_context(host), sealed)
+        .map_err(|_| io::Error::other("Could not read SSH access saved on this PC."))
+}
+
+pub(crate) fn save_vps_access(path: &Path, host: &str, sealed: &str) -> io::Result<()> {
+    update(path, |prefs| {
+        prefs["vps_access"][host.to_ascii_lowercase()] = sealed.into();
+        Ok(())
     })
 }
 

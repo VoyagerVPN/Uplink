@@ -10,9 +10,17 @@ export global VpsUi {
     in-out property <string> upgrade-result;
     in-out property <string> upgrade-log;
     pure callback check(string, string) -> string;
+    callback has-upgrade-access(string) -> bool;
     callback choose-key(string) -> string;
     callback install(string,string,string,string,string,string,string,string,string);
-    callback upgrade(string,string,string,string,string,string);
+    callback upgrade(string);
+    callback upgrade-with-access(string,string,string,string,string,string);
+}
+component FieldError inherits Label {
+    height: 16px;
+    font-size: 12px;
+    color: #e99087;
+    overflow: elide;
 }
 component Field inherits VerticalLayout {
     in property <string> title;
@@ -20,6 +28,7 @@ component Field inherits VerticalLayout {
     in property <bool> secret;
     in property <bool> eye;
     in property <bool> clearable:true;
+    in property <bool> show-error:true;
     callback toggle-eye();
     in property <string> error;
     in-out property <string> value <=> input.text;
@@ -32,17 +41,18 @@ component Field inherits VerticalLayout {
         if root.eye:Action {x:parent.width - 29px;y:2px;width:26px;height:28px;title-button:true;icon-only:true;glyph:root.secret?@image-url("../assets/icon/eye.svg"):@image-url("../assets/icon/eye-off.svg");
             accessible-label:root.secret?@tr("Show password"):@tr("Hide password");invoked=>{root.toggle-eye();}}
     }
-    if root.error!="": DialogError {text:root.error;}
+    if root.show-error: FieldError {text:root.error;}
 }
 export component VpsDialog inherits DialogFrame {
     in property <bool> created-network-selected;
     in property <string> upgrade-host;
+    in property <bool> saved-access;
     in property <int> server-revision;
     in property <int> bundled-server-revision;
     in property <string> suggested-ip;
     callback closed();
     callback copy-link(string)->bool;
-    in-out property <string> page:root.upgrading?"access":"name";
+    in-out property <string> page:root.upgrading?"confirm":"name";
     property <bool> checking;
     property <bool> is-key;
     property <string> name;
@@ -59,15 +69,28 @@ export component VpsDialog inherits DialogFrame {
     property <bool> help;
     property <string> field-issue;
     property <int> attempt;
+    private property <bool> manual-upgrade;
     private property <bool> upgrading:root.upgrade-host!="";
     private property <bool> busy:page=="progress" && (root.upgrading?VpsUi.upgrade-result=="":VpsUi.failure=="" && VpsUi.invitation=="");
     changed busy => { if root.upgrading && root.page=="progress" { root.focus(); } }
-    title: root.upgrading?@tr("Update server"):root.page=="access"?@tr("VPS access"):VpsUi.invitation!=""?@tr("Network created"):@tr("Create network");
-    show-back: root.page == "confirm" || (root.page == "access" && !root.upgrading);
+    title: root.page=="access"?@tr("VPS access"):root.upgrading?@tr("Update server"):VpsUi.invitation!=""?@tr("Network created"):@tr("Create network");
+    show-back: root.page=="access" || (root.page=="confirm" && !root.upgrading);
     show-close: !root.busy;
-    back => { root.go(root.page == "confirm" ? "access" : "name"); }
+    back => { root.go(root.upgrading ? "confirm" : root.page == "confirm" ? "access" : "name"); }
     dismiss => {if !root.busy {root.closed();}}
     function go(p:string) {root.checking=false; root.page=p; root.field-issue="";}
+    function start-upgrade(enter-access:bool) {
+        root.manual-upgrade=enter-access;
+        VpsUi.failure=""; VpsUi.upgrade-result=""; VpsUi.upgrade-log=""; VpsUi.step=1;
+        root.go("progress");
+        if enter-access {
+            VpsUi.upgrade-with-access(root.upgrade-host,root.ip,root.port,root.user,root.is-key?"":root.password,root.is-key?root.identity:"");
+            root.password="";
+            root.reveal=false;
+        } else {
+            VpsUi.upgrade(root.upgrade-host);
+        }
+    }
     function next() {
         root.checking=true;root.attempt+=1;
         if root.page=="name" {
@@ -78,13 +101,12 @@ export component VpsDialog inherits DialogFrame {
             else if VpsUi.check("user",root.user)!="" {root.field-issue="user";}
             else if root.is-key && root.identity=="" {root.checking=true;}
             else if !root.is-key && root.password=="" {root.field-issue="password";}
+            else if root.upgrading {root.start-upgrade(true);}
             else {root.go("confirm");}
         } else if root.page=="confirm" || (root.page=="progress" && VpsUi.failure!="") {
             if root.upgrading {
-                VpsUi.failure=""; VpsUi.upgrade-result=""; VpsUi.upgrade-log=""; VpsUi.step=1;
-                root.go("progress");
-                VpsUi.upgrade(root.upgrade-host,root.ip,root.port,root.user,root.is-key?"":root.password,root.is-key?root.identity:"");
-                root.password="";
+                if root.saved-access {root.start-upgrade(false);}
+                else {root.go("access");}
                 return;
             }
             if root.proxy && VpsUi.check("proxy_host",root.proxy-host)!="" {root.field-issue="proxy_host";return;}
@@ -97,10 +119,13 @@ export component VpsDialog inherits DialogFrame {
     }
     if root.page=="name": Field {focus-cycle:root.field-issue=="name"?root.attempt:0;title:@tr("Network name");value<=>root.name;error:root.checking?VpsUi.check("name",root.name):"";accept=>{root.next();}}
     if root.page=="name": Label {text:@tr("Use the server address and login from your hosting provider.");wrap:word-wrap;color:#a7abb2;}
-    if root.page=="access" && root.upgrading: Label {text:root.upgrade-host;color:#a7abb2;wrap:char-wrap;}
-    if root.page=="access":HorizontalLayout {spacing:8px;
-        Field {focus-cycle:root.field-issue=="ip"?root.attempt:0;title:@tr("Server IP address");hint:"192.0.2.10";value<=>root.ip;error:root.checking?VpsUi.check("ip",root.ip):"";accept=>{root.next();}}
-        Field {focus-cycle:root.field-issue=="port"?root.attempt:0;clearable:false;width:78px;title:@tr("SSH port");value<=>root.port;error:root.checking?VpsUi.check("port",root.port):"";accept=>{root.next();}}
+    if root.page=="access" && root.upgrading: Label {text:root.upgrade-host;color:#a7abb2;overflow:elide;}
+    if root.page=="access":VerticalLayout {spacing:3px;
+        HorizontalLayout {spacing:8px;
+            Field {show-error:false;focus-cycle:root.field-issue=="ip"?root.attempt:0;title:@tr("Server IP address");hint:"192.0.2.10";value<=>root.ip;accept=>{root.next();}}
+            Field {show-error:false;focus-cycle:root.field-issue=="port"?root.attempt:0;clearable:false;width:78px;title:@tr("SSH port");value<=>root.port;accept=>{root.next();}}
+        }
+        FieldError {text:!root.checking?"":VpsUi.check("ip",root.ip)!=""?VpsUi.check("ip",root.ip):VpsUi.check("port",root.port);}
     }
     if root.page=="access":Field {focus-cycle:root.field-issue=="user"?root.attempt:0;title:@tr("Login");hint:"root";value<=>root.user;error:root.checking?VpsUi.check("user",root.user):"";accept=>{root.next();}}
     if root.page=="access":HorizontalLayout {height:28px;
@@ -112,9 +137,11 @@ export component VpsDialog inherits DialogFrame {
             error:root.checking && root.password==""?@tr("Enter the VPS password."):"";accept=>{root.next();}}
 
     }
-    if root.page=="access" && root.is-key:DialogButton {
-        caption:root.identity==""?@tr("Choose SSH key"):root.identity;invoked=>{root.identity=VpsUi.choose-key(root.identity);}}
-    if root.page=="access" && root.is-key && root.checking && root.identity=="":DialogError {text:@tr("Choose your private key file.");}
+    if root.page=="access" && root.is-key:VerticalLayout {spacing:3px;
+        Label {text:@tr("SSH key");font-weight:600;}
+        DialogButton {caption:root.identity==""?@tr("Choose SSH key"):root.identity;invoked=>{root.identity=VpsUi.choose-key(root.identity);}}
+        FieldError {text:root.checking && root.identity==""?@tr("Choose your private key file."):"";}
+    }
     if root.page=="access": DialogButton {caption:@tr("Only have an IP and login?");invoked=>{root.help=!root.help;}}
     if root.page=="access" && root.help:Label {text:@tr("Open the access section in your VPS dashboard to set a password or choose a key.");wrap:word-wrap;color:#a7abb2;}
     if root.page=="confirm" && root.upgrading:VerticalLayout {spacing:8px;
@@ -127,6 +154,7 @@ export component VpsDialog inherits DialogFrame {
         }
         if root.server-revision<=root.bundled-server-revision:Label {text:@tr("All networks on this VPS will briefly disconnect.");wrap:word-wrap;}
         if root.server-revision>root.bundled-server-revision:Label {text:@tr("This server is already running a newer version");wrap:word-wrap;}
+        if !root.saved-access && root.server-revision<=root.bundled-server-revision:Label {text:@tr("Set up SSH access once on this PC to update this server.");wrap:word-wrap;color:#a7abb2;}
     }
     if root.page=="confirm" && !root.upgrading:VerticalLayout {spacing:8px;
         Label {text:root.name;font-size:16px;font-weight:600;}
@@ -137,13 +165,15 @@ export component VpsDialog inherits DialogFrame {
     if root.page=="confirm" && !root.upgrading && root.proxy:VerticalLayout {spacing:6px;
         Field {focus-cycle:root.field-issue=="proxy_host"?root.attempt:0;title:@tr("HTTPS proxy hostname");value<=>root.proxy-host;error:root.checking?VpsUi.check("proxy_host",root.proxy-host):"";accept=>{root.next();}}
         HorizontalLayout {spacing:8px;
-            Field {focus-cycle:root.field-issue=="proxy_bind"?root.attempt:0;title:@tr("Private VPS address");value<=>root.proxy-bind;error:root.checking?VpsUi.check("proxy_bind",root.proxy-bind):"";accept=>{root.next();}}
-            Field {width:100px;clearable:false;focus-cycle:root.field-issue=="udp_port"?root.attempt:0;title:@tr("Public UDP port");value<=>root.udp-port;error:root.checking?VpsUi.check("port",root.udp-port):"";accept=>{root.next();}}
+            Field {show-error:false;focus-cycle:root.field-issue=="proxy_bind"?root.attempt:0;title:@tr("Private VPS address");value<=>root.proxy-bind;accept=>{root.next();}}
+            Field {show-error:false;width:100px;clearable:false;focus-cycle:root.field-issue=="udp_port"?root.attempt:0;title:@tr("Public UDP port");value<=>root.udp-port;accept=>{root.next();}}
         }
+        FieldError {text:!root.checking?"":VpsUi.check("proxy_bind",root.proxy-bind)!=""?VpsUi.check("proxy_bind",root.proxy-bind):VpsUi.check("port",root.udp-port);}
     }
     if root.page!="progress":DialogButton {width:root.card-width - 34px;primary:true;
         available:!root.upgrading || root.page!="confirm" || root.server-revision<=root.bundled-server-revision;
-        caption:root.page=="confirm"?(root.upgrading?@tr("Update server"):@tr("Install and create network")):@tr("Continue");invoked=>{root.next();}}
+        caption:root.upgrading?(root.page=="access"?@tr("Save and update"):root.saved-access?@tr("Update server"):@tr("Set up SSH access")):
+            root.page=="confirm"?@tr("Install and create network"):@tr("Continue");invoked=>{root.next();}}
     if root.page=="progress" && !root.upgrading && VpsUi.invitation=="":VerticalLayout {spacing:7px;
         for label[i] in [@tr("Verify SSH access"),@tr("Set up the server and network"),@tr("Connect this PC"),@tr("Assign owner and get invitation")]: DialogStep {
             caption: label;
@@ -177,7 +207,12 @@ export component VpsDialog inherits DialogFrame {
         log-copied := Timer {interval:2s;running:false;triggered=>{self.stop();}}
         DialogActions {
             if VpsUi.upgrade-result=="updated" || VpsUi.upgrade-result=="current":DialogButton {primary:true;caption:@tr("Done");invoked=>{root.closed();}}
-            if VpsUi.upgrade-result!="updated" && VpsUi.upgrade-result!="current":DialogButton {primary:true;caption:@tr("Back");invoked=>{root.go("access");}}
+            if VpsUi.upgrade-result!="updated" && VpsUi.upgrade-result!="current":DialogButton {
+                primary:true;caption:root.manual-upgrade?@tr("Back"):@tr("Retry");
+                invoked=>{if root.manual-upgrade {root.go("access");} else {root.start-upgrade(false);}}
+            }
+            if VpsUi.upgrade-result=="failed" && VpsUi.step==1 && !root.manual-upgrade:DialogButton {
+                caption:@tr("Set up SSH access");invoked=>{root.go("access");}}
         }
     }
     if root.page=="progress" && VpsUi.invitation!="":VerticalLayout {spacing:8px;

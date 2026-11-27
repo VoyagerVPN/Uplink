@@ -357,6 +357,37 @@ fn show_error(ui: &RoomWindow, error: io::Error) {
     ui.set_error(uplink::i18n::error_message(&ui.get_language_code(), &error.to_string()).into());
 }
 
+fn request_update_focus(window: &RoomWindow) -> Result<(), slint::EventLoopError> {
+    use slint::winit_030::{
+        WinitWindowAccessor,
+        winit::raw_window_handle::{HasWindowHandle, RawWindowHandle},
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FLASHW_TRAY, FLASHWINFO, FlashWindowEx, GetForegroundWindow, SetForegroundWindow,
+    };
+
+    let weak = window.as_weak();
+    slint::spawn_local(async move {
+        let Some(ui) = weak.upgrade() else { return };
+        let Ok(native) = ui.window().winit_window().await else { return };
+        let Ok(handle) = native.window_handle() else { return };
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else { return };
+        let hwnd = handle.hwnd.get() as _;
+        unsafe {
+            if GetForegroundWindow() != hwnd && SetForegroundWindow(hwnd) == 0 {
+                FlashWindowEx(&FLASHWINFO {
+                    cbSize: size_of::<FLASHWINFO>() as u32,
+                    hwnd,
+                    dwFlags: FLASHW_TRAY,
+                    uCount: 3,
+                    dwTimeout: 0,
+                });
+            }
+        }
+    })?;
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "--setup-ui") {
@@ -387,9 +418,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         return update_preview::run(&window, scene);
     }
-    if !(args.is_empty() || args.len() == 1 && invite::accepts_invite(&args[0])) {
-        return Err(io::Error::other("Unknown invitation").into());
-    }
+    let (pending_invite, after_update) = match args.as_slice() {
+        [] => (None, false),
+        [flag] if flag == "--focus-after-update" => (None, true),
+        [url] if invite::accepts_invite(url) => (Some(url), false),
+        _ => return Err(io::Error::other("Unknown invitation").into()),
+    };
     let path = Rc::new(settings::path()?);
     vps_window::bind(&window, &path);
     update_window::bind(&window, &path)?;
@@ -429,7 +463,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => show_error(&ui, e),
         }
     });
-    if let Some(url) = args.first() {
+    if let Some(url) = pending_invite {
         settings::queue_invite(&path, url)?;
     }
     apply_rooms(&window, settings::rooms(&path)?);
@@ -613,6 +647,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     open_pending_invite(&window, &startup_path);
+    if after_update {
+        request_update_focus(&window)?;
+    }
     window.run()?;
     Ok(())
 }

@@ -1,5 +1,9 @@
-param([ValidatePattern('^Uplink-QA-[a-z0-9]+$')][string]$TestProduct)
+param(
+    [ValidatePattern('^Uplink-QA-[a-z0-9]+$')][string]$TestProduct,
+    [switch]$TestElevation
+)
 $ErrorActionPreference='Stop'
+if ($TestElevation -and !$TestProduct) {throw 'TestElevation requires an isolated test product'}
 $repo=Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 try {
@@ -31,12 +35,14 @@ try {
     $engine=& (Join-Path $PSScriptRoot 'engine.ps1') -Cache (Join-Path $repo '.cache/easytier-271')
     $inputs=@("$bin/uplink.exe","$bin/uplink-window.exe","$bin/uplinkctl.exe","$bin/uplink-network-service.exe",
         "$engine/uplink-engine.exe","$engine/wintun.dll","$engine/Packet.dll","$engine/WinDivert64.sys","$engine/WinDivert.dll","$engine/WinDivert-LICENSE.txt",
-        'installer/client-location.ps1','installer/manage-service.ps1','installer/cleanup-user.ps1','installer/EasyTier-LICENSE.txt','assets/fonts/Inter-LICENSE.txt','installer/uplink.nsi')
+        'installer/client-location.ps1','installer/manage-service.ps1','installer/cleanup-user.ps1','installer/run-elevated.ps1','installer/EasyTier-LICENSE.txt','assets/fonts/Inter-LICENSE.txt','installer/uplink.nsi')
     $hashes=($inputs | ForEach-Object {(Get-FileHash -LiteralPath $_).Hash}) -join ''
     $alg=[Security.Cryptography.SHA256]::Create()
     try {$tag=([BitConverter]::ToString($alg.ComputeHash([Text.Encoding]::ASCII.GetBytes($hashes)))).Replace('-','').Substring(0,20)} finally {$alg.Dispose()}
     $output=Join-Path $out "$product-Setup.exe"
-    & $compiler '/INPUTCHARSET' 'UTF8' '/V2' "/DENGINE=$engine" "/DPRODUCT=$product" "/DPROTOCOL=$protocol" "/DVERSION=$version" "/DTAG=$tag" "/DBIN=$bin" "/DOUTPUT=$output" (Join-Path $PSScriptRoot 'uplink.nsi')
+    $defines=@("/DENGINE=$engine", "/DPRODUCT=$product", "/DPROTOCOL=$protocol", "/DVERSION=$version", "/DTAG=$tag", "/DBIN=$bin", "/DOUTPUT=$output")
+    if ($TestElevation) {$defines+='/DQA_ELEVATION'}
+    & $compiler '/INPUTCHARSET' 'UTF8' '/V2' @defines (Join-Path $PSScriptRoot 'uplink.nsi')
     if ($LASTEXITCODE) {throw 'NSIS build failed'}
     Write-Output $output
 } finally {Pop-Location}

@@ -19,10 +19,7 @@ use uplink::{changed, control, settings};
 use windows_sys::Win32::{
     Foundation::POINT,
     Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
-    UI::{
-        HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
-        WindowsAndMessaging::{AllowSetForegroundWindow, GetWindowThreadProcessId},
-    },
+    UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
 };
 use winit::{
     dpi::PhysicalPosition,
@@ -54,19 +51,6 @@ fn menu_position(at: POINT) -> PhysicalPosition<i32> {
         (at.x - width / 2).clamp(work.left, (work.right - width).max(work.left)),
         top.clamp(work.top, (work.bottom - height).max(work.top)),
     )
-}
-
-fn allow_tray_focus() {
-    let tray = control::tray_window();
-    if !tray.is_null() {
-        let mut pid = 0;
-        unsafe {
-            GetWindowThreadProcessId(tray, &mut pid);
-            if pid != 0 {
-                AllowSetForegroundWindow(pid);
-            }
-        }
-    }
 }
 
 pub fn run(x: i32, y: i32, light_taskbar: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -132,7 +116,7 @@ pub fn run(x: i32, y: i32, light_taskbar: bool) -> Result<(), Box<dyn std::error
     window.on_choose(move |action| match action {
         TrayChoice::Open | TrayChoice::Quit => {
             if action == TrayChoice::Open {
-                allow_tray_focus();
+                control::allow_tray_focus();
             }
             output.set(Some(action));
             let _ = slint::quit_event_loop();

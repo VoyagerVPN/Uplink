@@ -46,28 +46,22 @@ pub fn bind(ui: &RoomWindow, path: &Path) {
             .map(|p| p.to_string_lossy().as_ref().into())
             .unwrap_or(old)
     });
+    let saved_path = path.to_owned();
+    api.on_has_upgrade_access(move |server| vps::has_saved_access(&saved_path, &server));
     let weak = ui.as_weak();
     let upgrade_path = path.to_owned();
-    api.on_upgrade(move |server, ip, port, user, password, identity| {
+    let run_upgrade = move |server: String, access: Option<vps::Creation>| {
         let progress = weak.clone();
         let complete = weak.clone();
         let path = upgrade_path.clone();
-        let request = vps::Upgrade {
-            server: server.into(),
-            access: vps::Creation {
-                ip: ip.into(),
-                port: port.trim().parse().unwrap_or(0),
-                user: user.into(),
-                password: password.into(),
-                identity: identity.into(),
-                trust_on_first_use: true,
-                ..Default::default()
-            },
-        };
         std::thread::spawn(move || {
-            let result = vps::upgrade(request, &path, |step| {
+            let on_step = |step| {
                 let _ = progress.upgrade_in_event_loop(move |ui| ui.global::<VpsUi>().set_step(step));
-            });
+            };
+            let result = match access {
+                Some(access) => vps::upgrade(vps::Upgrade { server, access }, &path, on_step),
+                None => vps::upgrade_saved(server, &path, on_step),
+            };
             let _ = complete.upgrade_in_event_loop(move |ui| {
                 let api = ui.global::<VpsUi>();
                 match result {
@@ -78,12 +72,25 @@ pub fn bind(ui: &RoomWindow, path: &Path) {
                         api.set_upgrade_result(report.result.into());
                     }
                     Err(error) => {
-                        api.set_failure(i18n::message(&ui.get_language_code(), &error.to_string()).into());
+                        api.set_failure(i18n::error_message(&ui.get_language_code(), &error.to_string()).into());
                         api.set_upgrade_result("failed".into());
                     }
                 }
             });
         });
+    };
+    let run_saved = run_upgrade.clone();
+    api.on_upgrade(move |server| run_saved(server.into(), None));
+    api.on_upgrade_with_access(move |server, ip, port, user, password, identity| {
+        run_upgrade(server.into(), Some(vps::Creation {
+            ip: ip.into(),
+            port: port.trim().parse().unwrap_or(0),
+            user: user.into(),
+            password: password.into(),
+            identity: identity.into(),
+            trust_on_first_use: true,
+            ..Default::default()
+        }));
     });
     let weak = ui.as_weak();
     let path = path.to_owned();

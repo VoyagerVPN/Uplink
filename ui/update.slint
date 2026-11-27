@@ -1,9 +1,11 @@
 import { Label, HintCard, ButtonFocus, ProgressRing, DialogFrame, DialogActions, DialogButton, DialogScroll, DialogTrigger } from "controls.slint";
 
 export enum UpdatePhase { idle, checking, current, found, loading, verifying, ready, restarting, updated, offline, invalid, install-failed }
+export enum UpdateFailure { none, check, release, download, storage, package, permission, busy, install-files, installer, client-files, client-start, updater }
 export struct ReleaseNote { text: string, heading: bool, bullet: bool, new-entry: bool }
 export global UpdateUi {
     in-out property <UpdatePhase> phase;
+    in-out property <UpdateFailure> failure;
     in-out property <string> version;
     in-out property <string> target;
     in-out property <[ReleaseNote]> notes;
@@ -16,21 +18,38 @@ export global UpdateUi {
     out property <bool> readable: phase == UpdatePhase.found || phase == UpdatePhase.loading || phase == UpdatePhase.verifying || phase == UpdatePhase.ready;
     out property <bool> busy: phase == UpdatePhase.checking || phase == UpdatePhase.verifying || phase == UpdatePhase.restarting;
     out property <bool> failed: phase == UpdatePhase.invalid || phase == UpdatePhase.offline || phase == UpdatePhase.install-failed;
-    out property <string> title: readable ? @tr("What’s new in {}", target) : @tr("Uplink updates");
+    private property <UpdateFailure> cause: failure != UpdateFailure.none ? failure
+        : phase == UpdatePhase.install-failed ? UpdateFailure.installer
+        : phase == UpdatePhase.invalid ? (target == "" ? UpdateFailure.release : UpdateFailure.package)
+        : target == "" ? UpdateFailure.check : UpdateFailure.download;
+    out property <string> title: readable ? @tr("What’s new in {}", target)
+        : failed ? @tr("Could not update Uplink") : @tr("Uplink updates");
     out property <string> hint: phase == UpdatePhase.found ? @tr("Download Uplink {}", target)
         : phase == UpdatePhase.ready ? @tr("Update {}: notes and installation", target)
         : phase == UpdatePhase.loading ? @tr("Downloading Uplink {} · {}%", target, percent)
         : phase == UpdatePhase.checking ? @tr("Checking for updates…")
         : phase == UpdatePhase.verifying ? @tr("Verifying package…")
         : phase == UpdatePhase.restarting ? @tr("Restarting Uplink…")
-        : phase == UpdatePhase.install-failed ? @tr("Installation failed. Check for updates")
-        : phase == UpdatePhase.invalid ? (target == "" ? @tr("Invalid release. Check again") : @tr("Verification failed. Download again"))
-        : @tr("Offline. Check again");
+        : failed ? @tr("View update error")
+        : phase == UpdatePhase.updated ? @tr("Update installed")
+        : phase == UpdatePhase.current ? @tr("You’re up to date.")
+        : @tr("Check for updates");
+    out property <string> failure-detail: cause == UpdateFailure.check ? @tr("Uplink couldn’t reach the update server. Check your internet connection and try again.")
+        : cause == UpdateFailure.release ? @tr("Uplink couldn’t verify the release information. Check again later.")
+        : cause == UpdateFailure.download ? @tr("The download couldn’t finish. Check your internet connection and try again.")
+        : cause == UpdateFailure.storage ? @tr("Uplink couldn’t save the download. Check available disk space and try again.")
+        : cause == UpdateFailure.package ? @tr("The installer failed verification. Try again to download a fresh copy.")
+        : cause == UpdateFailure.permission ? @tr("Windows didn’t grant permission to install. Try again and approve the Windows prompt.")
+        : cause == UpdateFailure.busy ? @tr("Another Uplink installation is running. Wait for it to finish and try again.")
+        : cause == UpdateFailure.install-files ? @tr("Setup couldn’t write the update files or register the new version. Check free disk space and access to the installation folder.")
+        : cause == UpdateFailure.client-files ? @tr("Uplink couldn’t find or verify the new client after Setup finished. Try installing the update again.")
+        : cause == UpdateFailure.client-start ? @tr("The update was installed, but the new client didn’t open. Exit Uplink from the tray and open it from Start.")
+        : cause == UpdateFailure.updater ? @tr("The background updater isn’t responding. Exit Uplink from the tray and open it again.")
+        : @tr("Setup couldn’t complete the installation. Try again. If it still fails, share the Uplink update log with support.");
+    out property <bool> retry-available: cause != UpdateFailure.client-start && cause != UpdateFailure.updater;
     public function act() {
-        if phase == UpdatePhase.ready { dialog-open = true; }
-        else if phase == UpdatePhase.invalid && target == "" { check(); }
-        else if phase == UpdatePhase.found || phase == UpdatePhase.invalid { download(); }
-        else if phase == UpdatePhase.offline || phase == UpdatePhase.install-failed { check(); }
+        if phase == UpdatePhase.ready || failed { dialog-open = true; }
+        else if phase == UpdatePhase.found { download(); }
     }
 }
 
@@ -120,10 +139,19 @@ component ReleaseNotes inherits DialogScroll {
 }
 
 export component UpdateDialog inherits DialogFrame {
+    private property <UpdatePhase> current-phase: UpdateUi.phase;
     title: UpdateUi.title;
     init => { self.focus(); }
+    changed current-phase => { self.focus(); }
     dismiss => { UpdateUi.dialog-open = false; }
-    if !UpdateUi.readable: Label { text: UpdateUi.hint; wrap: word-wrap; color: #a7abb2; }
+    if !UpdateUi.readable: Label { text: UpdateUi.failed ? UpdateUi.failure-detail : UpdateUi.hint; wrap: word-wrap; color: #a7abb2; }
+    if UpdateUi.failed: DialogActions {
+        DialogButton {
+            primary: true;
+            caption: UpdateUi.retry-available ? @tr("Try again") : @tr("Close");
+            invoked => { if UpdateUi.retry-available { UpdateUi.check(); } else { UpdateUi.dialog-open = false; } }
+        }
+    }
     if UpdateUi.readable: ReleaseNotes {}
     if UpdateUi.readable: DialogActions {
         DialogButton {

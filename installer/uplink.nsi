@@ -58,6 +58,20 @@ Var setupStage
     Pop $7
 !macroend
 
+!macro runElevated executable arguments
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File "run-elevated.ps1"
+    nsExec::ExecToStack '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\run-elevated.ps1" -Executable "${executable}" -ArgumentLine "${arguments}"'
+    Pop $1
+    Pop $0
+    ClearErrors
+    ${If} $1 == "error"
+    ${OrIf} $1 == "timeout"
+        StrCpy $1 65567
+    ${EndIf}
+!macroend
+
 !macro osinit
     SetShellVarContext all
     SetRegView 64
@@ -187,15 +201,28 @@ callerReady:
     UserInfo::GetAccountType
     Pop $1
     ClearErrors
+    !ifdef QA_ELEVATION
+        Goto requestElevation
+    !endif
     StrCmp $1 "Admin" 0 requestElevation
     ExecWait '"$EXEPATH" $2' $1
     Goto machineResult
 requestElevation:
-    ExecShellWait "runas" "$EXEPATH" "$2" SW_HIDE $1
+    !insertmacro runElevated "$EXEPATH" "$2"
 machineResult:
     ${If} ${Errors}
         !insertmacro setupEvent "machine_launch" "failed" "exit=2"
         StrCpy $1 2
+        Goto clientDone
+    ${EndIf}
+    ${If} $1 >= 65536
+        IntOp $0 $1 & 65535
+        StrCpy $1 2
+        ${If} $0 == 5
+        ${OrIf} $0 == 1223
+            StrCpy $1 $0
+        ${EndIf}
+        !insertmacro setupEvent "machine_launch" "failed" "exit=$1 win32=$0"
         Goto clientDone
     ${EndIf}
     ${If} $1 != 0
@@ -413,11 +440,26 @@ backend:
     StrCpy $machineOnly 1
     UserInfo::GetAccountType
     Pop $1
+    StrCmp $machineOnly 1 elevated
+    !ifdef QA_ELEVATION
+        Goto requestElevation
+    !endif
     StrCmp $1 "Admin" elevated
+requestElevation:
+    ; Системный процесс должен работать вне папки, которую он удаляет.
+    InitPluginsDir
     ClearErrors
-    ExecShellWait "runas" "$INSTDIR\Uninstall.exe" '/S /UPLINKMACHINE _?=$INSTDIR' SW_HIDE $1
-    IfErrors 0 +2
-    StrCpy $1 2
+    CopyFiles /SILENT "$INSTDIR\Uninstall.exe" "$PLUGINSDIR\remove-machine.exe"
+    ${If} ${Errors}
+        SetErrorLevel 2
+        Quit
+    ${EndIf}
+    !insertmacro runElevated "$PLUGINSDIR\remove-machine.exe" "/S /UPLINKMACHINE _?=$INSTDIR"
+    ${If} $1 >= 65536
+        IntOp $0 $1 & 65535
+        !insertmacro setupEvent "machine_uninstall_launch" "failed" "exit=2 win32=$0"
+        StrCpy $1 2
+    ${EndIf}
     StrCmp $1 0 0 callerDone
     Call un.userCleanup
     StrCpy $1 0
@@ -425,6 +467,9 @@ callerDone:
     SetErrorLevel $1
     Quit
 elevated:
+    StrCmp $1 "Admin" +3
+    SetErrorLevel 2
+    Quit
     !insertmacro lock
 FunctionEnd
 

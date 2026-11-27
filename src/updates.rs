@@ -240,7 +240,7 @@ impl Release {
         Ok(Package { path })
     }
 
-    pub fn install(&self, package: &Package, profile: &Path) -> io::Result<()> {
+    pub fn install(&self, package: &Package, profile: &Path) -> Result<(), Failure> {
         let path: &Path = package.path.as_ref();
         let record = |stage, fields: std::fmt::Arguments<'_>| {
             crate::settings::diagnostics::update(
@@ -252,13 +252,13 @@ impl Release {
                 ),
             );
         };
-        let mut stage = "verify_installer";
+        let mut stage = InstallStage::VerifyInstaller;
         let mut installer_exit = None;
-        record(stage, format_args!("result=started"));
+        record(stage.label(), format_args!("result=started"));
         let result: io::Result<()> = (|| {
             let _verified = locked(path, &self.sha256)?;
-            stage = "run_installer";
-            record(stage, format_args!("result=started"));
+            stage = InstallStage::RunInstaller;
+            record(stage.label(), format_args!("result=started"));
             let status = Command::new(path)
                 .args(["/S", "/UPLINKUPDATE"])
                 .creation_flags(0x08000000)
@@ -267,15 +267,16 @@ impl Release {
             if !status.success() {
                 return Err(io::Error::other("Uplink Setup failed"));
             }
-            stage = "locate_installed_client";
+            stage = InstallStage::LocateClient;
             let exe = installed_client("Uplink")?;
-            stage = "verify_installed_client";
+            stage = InstallStage::VerifyClient;
             let _client = locked(&exe, &self.client_sha256)?;
-            stage = "launch_installed_client";
-            Command::new(exe)
+            stage = InstallStage::LaunchClient;
+            let client = Command::new(exe)
                 .arg("--after-update")
                 .arg(std::process::id().to_string())
                 .spawn()?;
+            unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(client.id()) };
             Ok(())
         })();
         let exit = installer_exit.map_or_else(String::new, |code| format!(" installer_exit={code}"));
@@ -284,11 +285,46 @@ impl Release {
             let win32 = error
                 .raw_os_error()
                 .map_or_else(String::new, |code| format!(" win32={code}"));
-            record(stage, format_args!("result=failed kind={kind:?}{win32}{exit}"));
+            record(stage.label(), format_args!("result=failed kind={kind:?}{win32}{exit}"));
         } else {
-            record(stage, format_args!("result=ok{exit}"));
+            record(stage.label(), format_args!("result=ok{exit}"));
         }
-        result
+        result.map_err(|error| install_failure(stage, installer_exit, &error))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum InstallStage {
+    VerifyInstaller,
+    RunInstaller,
+    LocateClient,
+    VerifyClient,
+    LaunchClient,
+}
+
+impl InstallStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::VerifyInstaller => "verify_installer",
+            Self::RunInstaller => "run_installer",
+            Self::LocateClient => "locate_installed_client",
+            Self::VerifyClient => "verify_installed_client",
+            Self::LaunchClient => "launch_installed_client",
+        }
+    }
+}
+
+fn install_failure(stage: InstallStage, exit: Option<i32>, error: &io::Error) -> Failure {
+    match stage {
+        InstallStage::VerifyInstaller => Failure::Package,
+        InstallStage::LocateClient | InstallStage::VerifyClient => Failure::ClientFiles,
+        InstallStage::LaunchClient => Failure::ClientStart,
+        InstallStage::RunInstaller => match exit.or_else(|| error.raw_os_error()) {
+            Some(5 | 740 | 1223) => Failure::Permission,
+            Some(23) if exit.is_some() => Failure::Busy,
+            Some(1 | 22) if exit.is_some() => Failure::InstallFiles,
+            _ => Failure::Installer,
+        },
     }
 }
 pub fn installed_client(product: &str) -> io::Result<PathBuf> {
@@ -329,6 +365,24 @@ pub struct Status {
     pub target: String,
     pub notes: String,
     pub percent: u8,
+    #[serde(default)]
+    pub failure: Option<Failure>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Failure {
+    Check,
+    Release,
+    Download,
+    Storage,
+    Package,
+    Permission,
+    Busy,
+    InstallFiles,
+    Installer,
+    ClientFiles,
+    ClientStart,
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -348,6 +402,19 @@ pub enum Phase {
     InstallFailed,
 }
 impl Status {
+    pub fn after_restart(self, current: &str, updated: bool) -> Self {
+        if !updated
+            && self.phase.failed()
+            && (self.target.is_empty() || newer_stable(current, &format!("v{}", self.target)))
+        {
+            return self;
+        }
+        Self {
+            phase: if updated { Phase::Updated } else { Phase::Idle },
+            ..Self::default()
+        }
+    }
+
     pub fn load(profile: &Path) -> io::Result<Self> {
         Ok(serde_json::from_slice(&fs::read(
             profile.with_file_name("updates.json"),
@@ -363,11 +430,38 @@ impl Status {
     }
 }
 
+impl Phase {
+    pub fn failed(self) -> bool {
+        matches!(self, Self::Offline | Self::Invalid | Self::InstallFailed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use p256::ecdsa::{SigningKey, signature::Signer};
     use serde_json::json;
+
+    #[test]
+    fn update_failures_survive_restart_with_the_right_recovery() {
+        let legacy: Status = serde_json::from_value(json!({
+            "phase":"installfailed", "target":"0.3.1", "notes":"", "percent":100
+        })).unwrap();
+        let pending = legacy.after_restart("0.3.0", false);
+        assert_eq!(pending.phase, Phase::InstallFailed);
+        assert_eq!(pending.failure, None);
+        assert_eq!(pending.clone().after_restart("0.3.1", false).phase, Phase::Idle);
+        assert_eq!(pending.after_restart("0.3.1", true).phase, Phase::Updated);
+
+        assert_eq!(install_failure(InstallStage::RunInstaller, Some(1223), &io::Error::other("cancel")),
+            Failure::Permission);
+        assert_eq!(install_failure(InstallStage::RunInstaller, Some(23), &io::Error::other("busy")),
+            Failure::Busy);
+        assert_eq!(install_failure(InstallStage::RunInstaller, Some(22), &io::Error::other("files")),
+            Failure::InstallFiles);
+        assert_eq!(install_failure(InstallStage::LaunchClient, Some(0), &io::Error::other("launch")),
+            Failure::ClientStart);
+    }
 
     #[test]
     fn signed_release_binds_notes_package_and_version_to_the_publisher() {
@@ -437,12 +531,10 @@ mod tests {
             notes: String::new(),
         };
 
-        let error = release.install(&package, &profile).unwrap_err();
-        let code = error.raw_os_error().unwrap();
-        assert!(matches!(code, 193 | 216));
+        assert_eq!(release.install(&package, &profile), Err(Failure::Installer));
         let log = fs::read_to_string(dir.path().join("update.log")).unwrap();
         assert!(log.contains("target=0.3.0 stage=run_installer result=failed"));
-        assert!(log.contains(&format!("win32={code}")));
+        assert!(log.contains("win32=193") || log.contains("win32=216"));
         assert!(!log.contains(&dir.path().display().to_string()));
     }
 

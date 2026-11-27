@@ -6,7 +6,7 @@ use std::{
 };
 use uplink::{
     control, settings,
-    updates::{self, Phase, Status},
+    updates::{self, Failure, Phase, Status},
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
 
@@ -17,10 +17,8 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
         let staging = profile.with_file_name("update-cache");
         updates::clean_staging(&staging);
         let auto = || settings::options(&profile).is_ok_and(|o| o.autoupdate);
-        let mut state = Status::default();
-        if updated {
-            state.phase = Phase::Updated;
-        }
+        let current = env!("CARGO_PKG_VERSION");
+        let mut state = Status::load(&profile).unwrap_or_default().after_restart(current, updated);
         let _ = state.save(&profile);
         let mut release = None;
         let mut package = None;
@@ -40,12 +38,18 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
                     continue;
                 }
                 if let (Some(r), Some(p)) = (&release, &package) {
+                    state.failure = None;
                     publish(&mut state, Phase::Restarting);
-                    if updates::Release::install(r, p, &profile).is_ok() {
-                        unsafe { PostThreadMessageW(owner, crate::tray::QUIT, 0, 0) };
-                        break;
+                    match updates::Release::install(r, p, &profile) {
+                        Ok(()) => {
+                            unsafe { PostThreadMessageW(owner, crate::tray::QUIT, 0, 0) };
+                            break;
+                        }
+                        Err(failure) => {
+                            state.failure = Some(failure);
+                            publish(&mut state, Phase::InstallFailed);
+                        }
                     }
-                    publish(&mut state, Phase::InstallFailed);
                 }
                 continue;
             }
@@ -55,12 +59,23 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
                     continue;
                 }
                 next = Instant::now() + Duration::from_secs(6 * 3600);
+                // После перезапуска сохраняем объяснение сбоя, пока не вышла замена
+                // или пользователь сам не запустил повторную проверку.
+                let latest = if cmd == control::UPDATE_AUTO && state.phase.failed() && !state.target.is_empty() {
+                    match updates::latest(&state.target) {
+                        Ok(Some(newer)) => Ok(Some(newer)),
+                        _ => continue,
+                    }
+                } else {
+                    state = Status::default();
+                    publish(&mut state, Phase::Checking);
+                    updates::latest(current)
+                };
                 package = None;
                 release = None;
-                state = Status::default();
-                publish(&mut state, Phase::Checking);
-                match updates::latest(env!("CARGO_PKG_VERSION")) {
+                match latest {
                     Ok(Some(r)) => {
+                        state = Status::default();
                         state.target = r.version.clone();
                         state.notes = r.notes.clone();
                         release = Some(r);
@@ -72,6 +87,11 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
                         continue;
                     }
                     Err(e) => {
+                        state.failure = Some(if e.kind() == io::ErrorKind::InvalidData {
+                            Failure::Release
+                        } else {
+                            Failure::Check
+                        });
                         publish(
                             &mut state,
                             if e.kind() == io::ErrorKind::InvalidData {
@@ -93,6 +113,7 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
             }
             let Some(r) = release.as_ref() else { continue };
             state.percent = 0;
+            state.failure = None;
             publish(&mut state, Phase::Loading);
             let mut progress = state.clone();
             let mut verification = state.clone();
@@ -111,6 +132,11 @@ pub fn start(profile: PathBuf, updated: bool) -> SyncSender<u32> {
                 }
                 Err(e) => {
                     package = None;
+                    state.failure = Some(match e.kind() {
+                        io::ErrorKind::InvalidData => Failure::Package,
+                        io::ErrorKind::PermissionDenied | io::ErrorKind::StorageFull => Failure::Storage,
+                        _ => Failure::Download,
+                    });
                     publish(
                         &mut state,
                         if e.kind() == io::ErrorKind::InvalidData {

@@ -100,7 +100,18 @@ if ($custom) {
     }
 }
 $exe=Join-Path $dir 'uplink.exe'
-if (!$state -and !$custom -and !$hook -and !$legacy) {return}
+$owned=@($oldExe,(Join-Path $source 'uplink.exe'))
+if ($legacy) {$owned+=Join-Path $legacy 'uplink.exe'}
+if ($autostart -match '^"([^"]+)\\uplink\.exe" --background$') {
+    $previous=$Matches[1]
+    # Стандартной установке может не соответствовать запись HKCU о старом пакете.
+    if ([IO.Path]::GetDirectoryName($previous) -eq (Join-Path $machine.PackageRoot 'packages') -and
+        (Package-Marker $previous)) {
+        $owned+=Join-Path $previous 'uplink.exe'
+    }
+}
+$moveStartup=$autostart -and $autostart -in @($owned | ForEach-Object {'"'+$_+'" --background'})
+if (!$state -and !$custom -and !$hook -and !$legacy -and !$moveStartup) {return}
 $installStep=3
 if (!(Test-Path -LiteralPath $key)) {New-Item -Path $key -Force | Out-Null}
 if ($custom) {
@@ -114,15 +125,13 @@ if ($custom) {
 foreach ($item in @{PackageRoot=$root; InstallLocation=$dir}.GetEnumerator()) {
     New-ItemProperty -LiteralPath $key -Name $item.Key -Value $item.Value -Force | Out-Null
 }
-$owned=@($oldExe,(Join-Path $source 'uplink.exe'))
-if ($legacy) {$owned+=Join-Path $legacy 'uplink.exe'}
 if (!$command -or $command -in @($owned | ForEach-Object {'"'+$_+'" "%1"'})) {
     New-Item -Path "$protocol\shell\open\command" -Force | Out-Null
     Set-Item -LiteralPath $protocol -Value 'URL:Uplink Invitation'
     New-ItemProperty -LiteralPath $protocol -Name 'URL Protocol' -Value '' -Force | Out-Null
     Set-Item -LiteralPath "$protocol\shell\open\command" -Value ('"'+$exe+'" "%1"')
 }
-if ($autostart -and $autostart -in @($owned | ForEach-Object {'"'+$_+'" --background'})) {
+if ($moveStartup) {
     Set-ItemProperty -LiteralPath $runKey -Name $Product -Value ('"'+$exe+'" --background')
 }
 $installStep=4

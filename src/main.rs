@@ -82,6 +82,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if background {
             return Ok(());
         }
+        if updated {
+            control::allow_tray_focus();
+        }
         if unsafe { SetEvent(event.as_raw_handle()) } == 0 {
             return Err(io::Error::last_os_error().into());
         }
@@ -102,7 +105,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             std::thread::sleep(std::time::Duration::from_secs(8));
         }
     });
-    if !background {
+    if updated {
+        window.open_after_update()?;
+    } else if !background {
         window.open()?;
     }
     let handles = [event.as_raw_handle()];

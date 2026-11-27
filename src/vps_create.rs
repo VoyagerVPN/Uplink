@@ -131,7 +131,7 @@ fn known_hosts_option(pin: &Path) -> io::Result<String> {
     Ok(format!("UserKnownHostsFile=\"{pin}\""))
 }
 
-fn pinned_keys(config: &Creation, prefs: &Path) -> io::Result<tempfile::TempDir> {
+fn pinned_keys(config: &Creation, prefs: &Path) -> io::Result<(tempfile::TempDir, String)> {
     let directory = tempfile::tempdir()?;
     let pin = directory.path().join("known_hosts");
     // Этот обмен получает только открытый ключ. Пароль и ключ пользователя передаются
@@ -165,7 +165,7 @@ fn pinned_keys(config: &Creation, prefs: &Path) -> io::Result<tempfile::TempDir>
                     directory.path().join("known_hosts"),
                     format!("{host} ssh-ed25519 {key}\n"),
                 )?;
-                return Ok(directory);
+                return Ok((directory, fingerprint));
             }
         }
     }
@@ -280,9 +280,9 @@ fn reply(reader: &mut impl BufRead) -> io::Result<Value> {
 }
 
 fn authenticated(c: &Creation, path: &Path) -> io::Result<(
-    std::process::ChildStdin, BufReader<std::process::ChildStdout>, mpsc::Sender<()>,
+    std::process::ChildStdin, BufReader<std::process::ChildStdout>, mpsc::Sender<()>, String,
 )> {
-    let keys = pinned_keys(c, path)?;
+    let (keys, fingerprint) = pinned_keys(c, path)?;
     let mut process = connection(c, &keys.path().join("known_hosts"))?;
     let input = process.stdin.take().unwrap();
     let mut output = BufReader::new(process.stdout.take().unwrap());
@@ -297,7 +297,27 @@ fn authenticated(c: &Creation, path: &Path) -> io::Result<(
     if reply(&mut output)?["stage"] != "authenticated" {
         return Err(io::Error::other("Unexpected SSH response."));
     }
-    Ok((input, output, lifetime))
+    Ok((input, output, lifetime, fingerprint))
+}
+
+fn seal_access(host: &str, access: &Creation, fingerprint: &str) -> io::Result<String> {
+    let record = json!({
+        "ip": access.ip, "port": access.port, "user": access.user,
+        "password": access.password, "identity": access.identity, "fingerprint": fingerprint,
+    });
+    settings::seal_vps_access(host, &record.to_string())
+}
+
+fn saved_access(path: &Path, server: &str) -> io::Result<Creation> {
+    let record = settings::load_vps_access(path, server)?;
+    let access: Creation = serde_json::from_str(&record)
+        .map_err(|_| invalid("Could not read SSH access saved on this PC."))?;
+    access.validate_access()?;
+    Ok(access)
+}
+
+pub fn has_saved_access(path: &Path, server: &str) -> bool {
+    saved_access(path, server).is_ok()
 }
 
 fn send_bundle(c: &Creation, input: &mut impl Write, request: Value) -> io::Result<()> {
@@ -337,7 +357,7 @@ pub fn create(
 ) -> io::Result<CreatedNetwork> {
     c.validate()?;
     step(1);
-    let (mut input, mut output, _lifetime) = authenticated(&c, path)?;
+    let (mut input, mut output, _lifetime, fingerprint) = authenticated(&c, path)?;
     step(2);
     let scope = format!("{}:{}|{}|{}", c.ip, c.port, c.host(), c.name.trim());
     let group = settings::creation_id(path, &scope)?;
@@ -351,6 +371,7 @@ pub fn create(
         .as_str()
         .filter(|s| invite::valid_host(s) && (c.public_host.is_empty() || *s == c.public_host))
         .ok_or_else(|| invalid("Invalid public endpoint configuration."))?;
+    let sealed_access = seal_access(host, &c, &fingerprint)?;
     let enrollment = ticket(&created, host)?;
     step(3);
     let membership = || -> io::Result<Option<crate::transport::Membership>> {
@@ -369,7 +390,7 @@ pub fn create(
     input.flush()?;
     drop(input);
     let invitation = ticket(&reply(&mut output)?, host)?;
-    settings::finish_creation(path, &scope, &own)?;
+    settings::finish_creation(path, &scope, &own, &sealed_access)?;
     let _ = crate::changed::notify();
     Ok(CreatedNetwork { invitation, key: own.key() })
 }
@@ -393,6 +414,15 @@ pub fn server_revision() -> u16 {
 }
 
 pub fn upgrade(request: Upgrade, path: &Path, progress: impl Fn(i32)) -> io::Result<UpgradeReport> {
+    run_upgrade(request, path, true, progress)
+}
+
+pub fn upgrade_saved(server: String, path: &Path, progress: impl Fn(i32)) -> io::Result<UpgradeReport> {
+    let access = saved_access(path, &server)?;
+    run_upgrade(Upgrade { server, access }, path, false, progress)
+}
+
+fn run_upgrade(request: Upgrade, path: &Path, remember: bool, progress: impl Fn(i32)) -> io::Result<UpgradeReport> {
     let Upgrade { server, mut access } = request;
     access.validate_access()?;
     if !invite::valid_host(&server) {
@@ -414,8 +444,12 @@ pub fn upgrade(request: Upgrade, path: &Path, progress: impl Fn(i32)) -> io::Res
     progress(1);
     record(json!({"stage":"ssh","target":server_revision()}));
     let mut dispatched = false;
+    let mut sealed_access = None;
     let result: io::Result<Value> = (|| {
-        let (mut input, mut output, _lifetime) = authenticated(&access, path)?;
+        let (mut input, mut output, _lifetime, fingerprint) = authenticated(&access, path)?;
+        if remember {
+            sealed_access = Some(seal_access(&server, &access, &fingerprint)?);
+        }
         record(json!({"stage":"authenticated"}));
         progress(2);
         send_bundle(&access, &mut input, json!({"operation":"upgrade","host":server,"version":server_revision()}))?;
@@ -446,7 +480,7 @@ pub fn upgrade(request: Upgrade, path: &Path, progress: impl Fn(i32)) -> io::Res
         }
         Err(io::Error::other("Unexpected SSH response."))
     })();
-    let (result, detail) = match result {
+    let (result, mut detail) = match result {
         Ok(event) => (
             event["result"].as_str().unwrap_or("interrupted").to_owned(),
             event["detail"].as_str().unwrap_or_default().to_owned(),
@@ -458,5 +492,50 @@ pub fn upgrade(request: Upgrade, path: &Path, progress: impl Fn(i32)) -> io::Res
             (result.to_owned(), error.to_string())
         }
     };
+    if matches!(result.as_str(), "updated" | "current")
+        && let Some(sealed) = sealed_access
+        && let Err(error) = settings::save_vps_access(path, &server, &sealed)
+    {
+        record(json!({"stage":"save_ssh_access","result":"failed","kind":format!("{:?}", error.kind()),"win32":error.raw_os_error()}));
+        detail = "Could not save SSH access on this PC.".into();
+    }
     Ok(UpgradeReport { result, detail, log_file, log_text })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_upgrade_access_is_private_and_bound_to_the_servers_public_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let prefs = directory.path().join("prefs.json");
+        let access = Creation {
+            ip: "192.0.2.10".into(),
+            port: 22141,
+            user: "root".into(),
+            password: "fixture-vps-password".into(),
+            ..Default::default()
+        };
+        let host = "lan.example";
+        let fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        assert!(!has_saved_access(&prefs, host));
+        let sealed = seal_access(host, &access, fingerprint).unwrap();
+        settings::save_vps_access(&prefs, host, &sealed).unwrap();
+        let file = std::fs::read_to_string(&prefs).unwrap();
+        assert!(!file.contains(&access.password));
+        assert!(!file.contains(&access.ip));
+
+        let resumed = saved_access(&prefs, "LAN.EXAMPLE").unwrap();
+        assert_eq!(resumed.ip, access.ip);
+        assert_eq!(resumed.port, access.port);
+        assert_eq!(resumed.user, access.user);
+        assert_eq!(resumed.password, access.password);
+        assert_eq!(resumed.fingerprint, fingerprint);
+        assert!(!resumed.trust_on_first_use);
+
+        settings::save_vps_access(&prefs, "other.example", &sealed).unwrap();
+        assert!(!has_saved_access(&prefs, "other.example"));
+        assert!(has_saved_access(&prefs, host));
+    }
 }

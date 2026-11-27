@@ -1,13 +1,27 @@
-use super::{RoomWindow, UpdatePhase, UpdateUi, update_notes};
+use super::{RoomWindow, UpdateFailure, UpdatePhase, UpdateUi, update_notes};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{io, os::windows::io::AsRawHandle, path::Path};
 use uplink::{
     changed, control,
-    updates::{Phase, Status},
+    updates::{Failure, Phase, Status},
 };
 use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
 fn apply(ui: &RoomWindow, state: Status) {
     let update = ui.global::<UpdateUi>();
+    update.set_failure(match state.failure {
+        None => UpdateFailure::None,
+        Some(Failure::Check) => UpdateFailure::Check,
+        Some(Failure::Release) => UpdateFailure::Release,
+        Some(Failure::Download) => UpdateFailure::Download,
+        Some(Failure::Storage) => UpdateFailure::Storage,
+        Some(Failure::Package) => UpdateFailure::Package,
+        Some(Failure::Permission) => UpdateFailure::Permission,
+        Some(Failure::Busy) => UpdateFailure::Busy,
+        Some(Failure::InstallFiles) => UpdateFailure::InstallFiles,
+        Some(Failure::Installer) => UpdateFailure::Installer,
+        Some(Failure::ClientFiles) => UpdateFailure::ClientFiles,
+        Some(Failure::ClientStart) => UpdateFailure::ClientStart,
+    });
     update.set_phase(match state.phase {
         Phase::Idle => UpdatePhase::Idle,
         Phase::Checking => UpdatePhase::Checking,
@@ -47,7 +61,9 @@ pub fn bind(window: &RoomWindow, profile: &Path) -> io::Result<()> {
             if control::send(cmd).is_err()
                 && let Some(ui) = weak.upgrade()
             {
-                ui.global::<UpdateUi>().set_phase(UpdatePhase::Offline);
+                let update = ui.global::<UpdateUi>();
+                update.set_failure(UpdateFailure::Updater);
+                update.set_phase(UpdatePhase::Offline);
             }
         }
     };

@@ -632,8 +632,56 @@ msgstr "После загрузки вы сами выбираете момен�
 msgid "Invalid release. Check again"
 msgstr "Не удалось проверить выпуск. Проверить снова"
 
-msgid "Installation failed. Check for updates"
-msgstr "Установка не удалась. Проверить обновления"
+msgid "Could not update Uplink"
+msgstr "Не удалось обновить Uplink"
+
+msgid "View update error"
+msgstr "Подробнее об ошибке обновления"
+
+msgid "Update installed"
+msgstr "Обновление установлено"
+
+msgid "You’re up to date."
+msgstr "Установлена последняя версия."
+
+msgid "Try again"
+msgstr "Повторить"
+
+msgid "Uplink couldn’t reach the update server. Check your internet connection and try again."
+msgstr "Uplink не смог связаться с сервером обновлений. Проверьте интернет и повторите попытку."
+
+msgid "Uplink couldn’t verify the release information. Check again later."
+msgstr "Uplink не смог проверить сведения о новой версии. Повторите проверку позже."
+
+msgid "The download couldn’t finish. Check your internet connection and try again."
+msgstr "Загрузка прервалась. Проверьте интернет и повторите попытку."
+
+msgid "Uplink couldn’t save the download. Check available disk space and try again."
+msgstr "Uplink не смог сохранить обновление. Проверьте свободное место на диске и повторите попытку."
+
+msgid "The installer failed verification. Try again to download a fresh copy."
+msgstr "Установщик не прошёл проверку. Повторите попытку, чтобы скачать его заново."
+
+msgid "Windows didn’t grant permission to install. Try again and approve the Windows prompt."
+msgstr "Windows не предоставила права на установку. Повторите попытку и подтвердите запрос Windows."
+
+msgid "Another Uplink installation is running. Wait for it to finish and try again."
+msgstr "Установщик Uplink уже работает. Дождитесь завершения установки и повторите попытку."
+
+msgid "Setup couldn’t write the update files or register the new version. Check free disk space and access to the installation folder."
+msgstr "Установщик не смог записать файлы или зарегистрировать новую версию. Проверьте свободное место и доступ к папке установки."
+
+msgid "Uplink couldn’t find or verify the new client after Setup finished. Try installing the update again."
+msgstr "После установки Uplink не смог найти или проверить файлы новой версии. Попробуйте установить обновление ещё раз."
+
+msgid "The update was installed, but the new client didn’t open. Exit Uplink from the tray and open it from Start."
+msgstr "Обновление установлено, но новая версия не открылась. Выйдите из Uplink через трей и запустите его из меню «Пуск»."
+
+msgid "The background updater isn’t responding. Exit Uplink from the tray and open it again."
+msgstr "Фоновый процесс обновления не отвечает. Выйдите из Uplink через трей и откройте его снова."
+
+msgid "Setup couldn’t complete the installation. Try again. If it still fails, share the Uplink update log with support."
+msgstr "Установщик не смог завершить обновление. Повторите попытку. Если ошибка появится снова, отправьте журнал обновления в поддержку."
 
 msgid "Update the server to change the network avatar."
 msgstr "Чтобы изменить аватар сети, обновите сервер Uplink."
@@ -1100,6 +1148,27 @@ msgstr "Для этого SSH-запроса уже используется д�
 
 msgid "Update server"
 msgstr "Обновить сервер"
+
+msgid "Set up SSH access"
+msgstr "Настроить SSH-доступ"
+
+msgid "Set up SSH access once on this PC to update this server."
+msgstr "Для обновления сервера один раз настройте SSH-доступ на этом компьютере."
+
+msgid "Save and update"
+msgstr "Сохранить и обновить"
+
+msgctxt "native"
+msgid "Could not save SSH access on this PC."
+msgstr "Не удалось сохранить SSH-доступ на этом компьютере."
+
+msgctxt "native"
+msgid "SSH access is not saved on this PC."
+msgstr "На этом компьютере не сохранён SSH-доступ."
+
+msgctxt "native"
+msgid "Could not read SSH access saved on this PC."
+msgstr "Не удалось прочитать сохранённый SSH-доступ."
 
 msgid "All networks on this VPS will briefly disconnect."
 msgstr "Все сети на этом VPS ненадолго отключатся."

@@ -1,7 +1,7 @@
 export { SetupWindow } from "setup.slint";
 export { TrayMenu, TrayChoice } from "tray-menu.slint";
 import { UpdateUi, UpdateHeader, UpdateDialog } from "update.slint";
-export { UpdateUi, UpdatePhase, ReleaseNote } from "update.slint";
+export { UpdateUi, UpdatePhase, UpdateFailure, ReleaseNote } from "update.slint";
 import { NetworkUi, NetworkPage } from "network.slint";
 import { VpsDialog, VpsUi } from "vps-dialog.slint";
 export { VpsUi } from "vps-dialog.slint";
@@ -222,11 +222,13 @@ export component RoomWindow inherits Window {
     in-out property <bool> creating-network;
     private property <string> upgrading-server;
     private property <int> upgrading-revision;
+    private property <bool> upgrading-with-saved-access;
     function open-server-upgrade(host: string, revision: int) {
         VpsUi.failure = ""; VpsUi.invitation = ""; VpsUi.step = 0;
         VpsUi.upgrade-result = ""; VpsUi.upgrade-log = "";
         root.upgrading-server = host;
         root.upgrading-revision = revision;
+        root.upgrading-with-saved-access = VpsUi.has-upgrade-access(host);
         root.creating-network = true;
     }
     out property <bool> created-network-selected: root.creating-network && VpsUi.invitation!="" && VpsUi.network-key!="" && root.invite-url==VpsUi.network-key;
@@ -642,6 +644,7 @@ export component RoomWindow inherits Window {
         enabled:NetworkUi.modal=="";
         created-network-selected:root.created-network-selected;
         upgrade-host:root.upgrading-server;
+        saved-access:root.upgrading-with-saved-access;
         server-revision:root.upgrading-revision;
         bundled-server-revision:NetworkUi.bundled-server-revision;
         suggested-ip:root.upgrading-server!="" && VpsUi.check("ip",root.upgrading-server)==""?root.upgrading-server:"";

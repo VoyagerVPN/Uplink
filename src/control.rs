@@ -32,10 +32,27 @@ pub const QUIT: u32 = WM_APP + 28;
 pub fn tray_window() -> windows_sys::Win32::Foundation::HWND {
     unsafe { FindWindowW(class(), ptr::null()) }
 }
+
+pub fn allow_tray_focus() {
+    let tray = tray_window();
+    if !tray.is_null() {
+        let mut pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(tray, &mut pid);
+            if pid != 0 {
+                AllowSetForegroundWindow(pid);
+            }
+        }
+    }
+}
+
 pub fn send(message: u32) -> io::Result<usize> {
     let target = tray_window();
     if target.is_null() {
         return Err(io::Error::other("Uplink is not running"));
+    }
+    if message == UPDATE_INSTALL {
+        allow_tray_focus();
     }
     let mut result = 0;
     if unsafe { SendMessageTimeoutW(target, message, 0, 0, SMTO_ABORTIFHUNG, 3000, &mut result) }

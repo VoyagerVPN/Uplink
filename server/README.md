@@ -10,7 +10,9 @@ An existing provider HTTPS proxy can forward to the private client API on port 8
 
 ## Update an existing VPS
 
-In Uplink 0.3.0, open **⋮ → Update server** from a network you own. Enter the SSH login and a password or key with root or passwordless sudo access. The app checks the address registered on the VPS before stopping anything. It updates the existing instance, including all networks on it. The connection pauses while the services restart. When the new server fails its health check, Uplink restores the previous program files and data, then checks the restored services.
+Open **⋮ → Update server** from a network you own and confirm the update. Uplink uses the SSH access it saved during setup. On another PC or for a server set up with an older client, choose **Set up SSH access** once. Use a password or SSH key with root or passwordless sudo access. Uplink protects the saved access under your Windows account and keeps only the path to a selected key file.
+
+The app checks the address registered on the VPS before stopping anything. It updates the existing instance, including all networks on it. The connection pauses while the services restart. When the new server fails its health check, Uplink restores the previous program files and data, then checks the restored services.
 
 The VPS continues the update if your SSH connection drops. Open the same action again to reconnect or recover an interrupted update. **Copy update log** shares the timeline from the current attempt. Windows saves it in `%APPDATA%\Uplink\server-upgrade.log`. The VPS keeps a copy in `/var/lib/uplink-upgrade/<attempt>/events.jsonl`. If automatic recovery fails, the recovery snapshot is kept on the VPS.
 

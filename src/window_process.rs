@@ -49,6 +49,14 @@ impl WindowProcess {
     }
 
     pub fn open(&mut self) -> io::Result<()> {
+        self.open_room(false)
+    }
+
+    pub fn open_after_update(&mut self) -> io::Result<()> {
+        self.open_room(true)
+    }
+
+    fn open_room(&mut self, focus_after_update: bool) -> io::Result<()> {
         if let Some(child) = &mut self.child {
             if let Some(hwnd) = visible_window(child.id()) {
                 unsafe {
@@ -67,7 +75,11 @@ impl WindowProcess {
                 return Ok(());
             }
         }
-        let child = self.spawn(&[])?;
+        let args = if focus_after_update { vec!["--focus-after-update".into()] } else { vec![] };
+        let child = self.spawn(&args)?;
+        if focus_after_update {
+            unsafe { AllowSetForegroundWindow(child.id()) };
+        }
         CHILD_PID.store(child.id(), std::sync::atomic::Ordering::Relaxed);
         self.child = Some(child);
         Ok(())
