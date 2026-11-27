@@ -686,6 +686,9 @@ msgstr "Установщик не смог завершить обновлени
 msgid "Update the server to change the network avatar."
 msgstr "Чтобы изменить аватар сети, обновите сервер Uplink."
 
+msgid "This feature will be available after a server update."
+msgstr "Эта функция станет доступна после обновления сервера."
+
 msgctxt "native"
 msgid "Could not complete this action."
 msgstr "Не удалось выполнить действие."

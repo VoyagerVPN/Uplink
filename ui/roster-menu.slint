@@ -1,10 +1,19 @@
-import { Action, CopyFeedback, Label } from "controls.slint";
+import { Action, CopyFeedback, HintCard, Label } from "controls.slint";
 import { NetworkUi } from "network.slint";
 
 export component RosterMenuAction inherits Action {
+    in property <string> disabled-hint;
     height: 29px;
     leading-icon: true;
     align-start: true;
+    hover-background: #303338;
+    border-radius: 4px;
+    border-width: root.keyboard-focus-visible ? 1px : 0px;
+    accessible-label: root.caption + (!root.available && root.disabled-hint != "" ? ". " + root.disabled-hint : "");
+    if !root.available && root.disabled-hint != "": Rectangle {
+        TouchArea { mouse-cursor: help; }
+        Tooltip { HintCard { message: root.disabled-hint; } }
+    }
 }
 
 export component RosterMenuDivider inherits Rectangle {

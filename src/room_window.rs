@@ -123,8 +123,16 @@ fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
         net.set_password("".into());
         net.set_password_on(false);
     }
-    net.set_live(rooms.first().is_some_and(|r| r.live.is_some()));
-    net.set_server_revision(rooms.first().and_then(|r| r.live.as_ref()).and_then(|r| r.server_revision).map_or(0, i32::from));
+    let live = rooms.first().and_then(|room| room.live.as_ref());
+    net.set_live(live.is_some());
+    net.set_server_revision(live.and_then(|member| member.server_revision).map_or(0, i32::from));
+    // Смена ника и обмен SSH-запросами появились вместе, до отправки номера версии.
+    net.set_network_nickname_supported(live.is_some_and(|member| {
+        member.ssh_supported || member.server_revision.is_some_and(|revision| revision >= 3)
+    }));
+    net.set_ssh_request_supported(
+        live.is_some_and(|member| member.ssh_supported && member.ssh_key_requests),
+    );
     net.set_bundled_server_revision(i32::from(uplink::vps::server_revision()));
     if rooms
         .first()

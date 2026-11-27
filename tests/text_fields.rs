@@ -54,6 +54,15 @@ fn count_color(surface: &MinimalSoftwareWindow, color: (u8, u8, u8)) -> usize {
     pixels.iter().filter(|p| (p.r, p.g, p.b) == color).count()
 }
 
+fn capture_settings_qa(surface: &MinimalSoftwareWindow, name: &str) {
+    let Some(directory) = std::env::var_os("UPLINK_SETTINGS_QA_OUTPUT") else { return; };
+    let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+    surface.request_redraw();
+    surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+    let bytes: Vec<_> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+    image::save_buffer(std::path::Path::new(&directory).join(name), &bytes, 388, 540, image::ColorType::Rgb8).unwrap();
+}
+
 #[test]
 fn avatar_save_stays_reachable_with_a_long_error_at_high_dpi() {
     let (ui, surface) = open();
@@ -92,7 +101,7 @@ fn avatar_save_stays_reachable_with_a_long_error_at_high_dpi() {
 
 #[test]
 fn open_language_list_allows_the_first_click_on_settings_and_switches() {
-    let (ui, _) = open();
+    let (ui, surface) = open();
     ui.set_settings_open(true);
     ui.set_languages(slint::ModelRc::new(slint::VecModel::from(vec![
         LanguageChoice {
@@ -107,9 +116,21 @@ fn open_language_list_allows_the_first_click_on_settings_and_switches() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let record = events.clone();
     ui.on_change_option(move |key, _| record.borrow_mut().push(key.to_string()));
+    ui.set_language_code("ru".into());
+    ui.set_language_name("Русский".into());
+    capture_settings_qa(&surface, "settings.png");
+    click(&ui, 332., 236.);
+    assert_eq!(*events.borrow(), ["autostart"], "The switch is at its usual position");
     click(&ui, 292., 172.);
-    click(&ui, 332., 304.);
-    assert_eq!(*events.borrow(), ["autostart"]);
+    capture_settings_qa(&surface, "language-popup.png");
+    click(&ui, 332., 236.);
+    assert_eq!(*events.borrow(), ["autostart", "autostart"], "Opening the language list keeps the switch in place and clickable");
+    let selection = Rc::new(RefCell::new(String::new()));
+    let selected = selection.clone();
+    ui.on_change_language(move |code| *selected.borrow_mut() = code.to_string());
+    click(&ui, 292., 172.);
+    click(&ui, 250., 208.);
+    assert_eq!(selection.borrow().as_str(), "en", "The first language is selectable below the chevron");
     click(&ui, 292., 172.);
     click(&ui, 281., 28.);
     assert!(!ui.get_settings_open());
@@ -303,6 +324,64 @@ fn a_network_manager_can_edit_the_title_and_click_away_to_save() {
     click(&ui, 350., 465.);
     assert_eq!(ui.get_room_name(), "LAN3");
     assert!(!ui.get_editing_room());
+}
+
+#[test]
+fn unsupported_member_actions_do_not_start_ssh_or_open_the_nickname_editor() {
+    let (ui, surface) = open();
+    ui.set_joined(true);
+    ui.set_room_name("Legacy network".into());
+    let network = ui.global::<NetworkUi>();
+    network.set_live(true);
+    network.set_manages(true);
+    network.set_owner(true);
+    ui.set_members(slint::ModelRc::new(slint::VecModel::from(vec![Member {
+        nick: "Mira".into(),
+        ip: "192.0.2.10".into(),
+        ..Default::default()
+    }])));
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let received = requests.clone();
+    ui.on_ssh_member(move |action, _| received.borrow_mut().push(action));
+
+    click(&ui, 355., 148.);
+    capture_settings_qa(&surface, "legacy-member-menu.png");
+    click(&ui, 252., 183.);
+    assert!(requests.borrow().is_empty(), "Legacy servers cannot receive SSH requests");
+    let background = || {
+        let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+        pixels[450 * 388 + 10]
+    };
+    let before = background();
+    click(&ui, 252., 212.);
+    assert_eq!(background(), before, "The disabled nickname action keeps the window outside the popup unchanged");
+    click(&ui, 252., 241.);
+    assert_eq!(network.get_modal(), "remove", "Supported member management stays available");
+}
+
+#[test]
+fn a_supported_server_can_receive_ssh_requests_from_the_member_menu() {
+    let (ui, surface) = open();
+    ui.set_joined(true);
+    ui.set_room_name("Updated network".into());
+    let network = ui.global::<NetworkUi>();
+    network.set_live(true);
+    network.set_ssh_request_supported(true);
+    ui.set_members(slint::ModelRc::new(slint::VecModel::from(vec![Member {
+        nick: "Mira".into(),
+        ip: "192.0.2.10".into(),
+        ..Default::default()
+    }])));
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let received = requests.clone();
+    ui.on_ssh_member(move |action, _| received.borrow_mut().push(action));
+    click(&ui, 355., 148.);
+    ui.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(350., 179.) });
+    capture_settings_qa(&surface, "supported-member-menu.png");
+    click(&ui, 350., 179.);
+    assert_eq!(requests.borrow().as_slice(), ["request"]);
 }
 
 #[test]

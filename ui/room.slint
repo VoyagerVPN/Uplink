@@ -261,6 +261,9 @@ export component RoomWindow inherits Window {
     in property <string> language-name;
     callback change-language(string);
     private property <bool> language-open;
+    private property <length> language-left;
+    private property <length> language-bottom;
+    private property <length> settings-control-width: 172px;
     changed settings-open => { root.language-open = false; }
     function set-preference(key: string, value: bool) {
         root.language-open = false;
@@ -329,12 +332,16 @@ export component RoomWindow inherits Window {
                     height: 48px; padding-left: 14px; padding-right: 14px; spacing: 12px;
                     PreferenceIcon { source: @image-url("../assets/icon/user.svg"); }
                     Label { text: @tr("Nickname"); font-weight: 600; }
-                    EditableTitle {
-                        width: 132px; type-size: 12px; show-pencil: true; settings-control: true;
-                        value: root.nickname; field-name: @tr("Nickname"); action-label: @tr("Edit nickname");
-                        editing <=> root.editing;
-                        changed-mode => { root.error = ""; }
-                        save(value) => { root.rename(value); }
+                    Rectangle {
+                        width: root.settings-control-width;
+                        EditableTitle {
+                            y: (parent.height - self.height) / 2; width: parent.width;
+                            type-size: 12px; show-pencil: true; settings-control: true;
+                            value: root.nickname; field-name: @tr("Nickname"); action-label: @tr("Edit nickname");
+                            editing <=> root.editing;
+                            changed-mode => { root.language-open = false; root.error = ""; }
+                            save(value) => { root.rename(value); }
+                        }
                     }
                 }
                 HorizontalLayout {
@@ -343,7 +350,7 @@ export component RoomWindow inherits Window {
                     PreferenceIcon { source: @image-url("../assets/icon/globe.svg"); }
                     Label { text: @tr("Language"); font-weight: 600; }
                     FocusScope {
-                        width: 132px; focus-on-tab-navigation: false;
+                        width: root.settings-control-width; focus-on-tab-navigation: false;
                         key-pressed(event) => {
                             if root.language-open && event.text == Key.Escape { root.language-open = false; return accept; }
                             return reject;
@@ -352,7 +359,11 @@ export component RoomWindow inherits Window {
                             y: (parent.height - self.height) / 2; width: parent.width;
                             filled: true; borderless-focus: true; caption: root.language-name; caption-inset: 12px;
                             accessible-label: @tr("Language") + ": " + root.language-name;
-                            invoked => { root.language-open = !root.language-open; }
+                            invoked => {
+                                root.language-left = self.absolute-position.x;
+                                root.language-bottom = self.absolute-position.y + self.height;
+                                root.language-open = !root.language-open;
+                            }
                             Image {
                                 x: parent.width - 22px; y: (parent.height - self.height) / 2;
                                 width: 14px; height: 14px; source: @image-url("../assets/icon/chevron-down.svg");
@@ -361,32 +372,6 @@ export component RoomWindow inherits Window {
                     }
                 }
             }
-            }
-            if root.language-open: HorizontalLayout {
-                padding-right: 14px; height: min(150px, root.languages.length * 30px + 8px);
-                Rectangle { horizontal-stretch: 1; }
-                FocusScope {
-                    width: 132px; focus-on-tab-navigation: false;
-                    key-pressed(event) => {
-                        if event.text == Key.Escape { root.language-open = false; return accept; }
-                        return reject;
-                    }
-                    Rectangle {
-                        background: #25272b; border-radius: 6px;
-                        ListView {
-                            x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
-                            for language in root.languages: Action {
-                                width: parent.width; caption: language.name; caption-inset: 8px;
-                                borderless-focus: true; selected: language.code == root.language-code;
-                                if self.selected: Image {
-                                    x: parent.width - 22px; y: (parent.height - self.height) / 2;
-                                    width: 14px; height: 14px; source: @image-url("../assets/icon/check.svg");
-                                }
-                                invoked => { root.change-language(language.code); root.language-open = false; }
-                            }
-                        }
-                    }
-                }
             }
             Rectangle { height: 188px; border-radius: 8px; background: #202225;
                 VerticalLayout {
@@ -558,6 +543,8 @@ export component RoomWindow inherits Window {
                             member-actions := Rectangle {
                                 width: 23px;
                                 property <bool> can-rename: member.own || (NetworkUi.manages && !member.creator && (!member.admin || NetworkUi.owner));
+                                property <bool> can-use-ssh: !NetworkUi.live || member.ssh-state != "" || NetworkUi.ssh-request-supported;
+                                property <bool> can-use-nickname: !NetworkUi.live || NetworkUi.network-nickname-supported;
                                 Action {
                                     width: 24px; height: 26px; icon-only: true; borderless-focus: true; glyph-size: 16px;
                                     glyph: @image-url("../assets/icon/more.svg"); caption: @tr("Member actions for {}", member.nick);
@@ -571,18 +558,25 @@ export component RoomWindow inherits Window {
                                         background: #25272b; border-width: 1px; border-color: #43474b; border-radius: 6px;
                                         member-menu := VerticalLayout { padding: 4px;
                                             if !member.own: RosterMenuAction {
-                                                width: parent.width;
+                                                width: parent.width - 8px;
+                                                available: member-actions.can-use-ssh;
+                                                disabled-hint: @tr("This feature will be available after a server update.");
                                                 caption: member.ssh-state == "incoming" ? @tr("Review SSH request") : member.ssh-state == "outgoing" ? @tr("Cancel SSH request") : @tr("Request SSH access");
                                                 glyph: @image-url("../assets/icon/terminal.svg");
-                                                invoked => { actions.close(); root.ssh-member(member.ssh-state == "incoming" ? "review" : member.ssh-state == "outgoing" ? "cancel" : "request", member.ip); }
+                                                invoked => {
+                                                    root.ssh-member(member.ssh-state == "incoming" ? "review" : member.ssh-state == "outgoing" ? "cancel" : "request", member.ip);
+                                                    actions.close();
+                                                }
                                             }
                                             if member-actions.can-rename: RosterMenuAction {
-                            width: parent.width;
+                                                width: parent.width - 8px;
+                                                available: member-actions.can-use-nickname;
+                                                disabled-hint: @tr("This feature will be available after a server update.");
                                                 caption: @tr("Edit network nickname"); glyph: @image-url("../assets/icon/pencil.svg");
                                                 invoked => { actions.close(); root.error = ""; root.alias-network = root.invite-url; root.alias-name = member.nick; root.alias-ip = member.ip; }
                                             }
                                             if member-actions.can-rename && !member.own: RosterMenuAction {
-                            width: parent.width;
+                                                width: parent.width - 8px;
                                                 caption: @tr("Remove from network"); glyph: @image-url("../assets/icon/leave.svg"); danger: true;
                                                 invoked => { actions.close(); NetworkUi.target = member.ip; NetworkUi.target-name = member.nick; NetworkUi.error = ""; NetworkUi.modal = "remove"; }
                                             }
@@ -592,6 +586,30 @@ export component RoomWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    if root.language-open: FocusScope {
+        x: root.language-left; y: root.language-bottom + 4px;
+        width: root.settings-control-width - 40px; height: min(150px, root.languages.length * 30px + 8px);
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.language-open = false; return accept; }
+            return reject;
+        }
+        Rectangle {
+            background: #25272b; border-radius: 6px;
+            ListView {
+                x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
+                for language in root.languages: Action {
+                    width: parent.width; caption: language.name; caption-inset: 8px;
+                    borderless-focus: true; selected: language.code == root.language-code;
+                    if self.selected: Image {
+                        x: parent.width - 22px; y: (parent.height - self.height) / 2;
+                        width: 14px; height: 14px; source: @image-url("../assets/icon/check.svg");
+                    }
+                    invoked => { root.change-language(language.code); root.language-open = false; }
                 }
             }
         }

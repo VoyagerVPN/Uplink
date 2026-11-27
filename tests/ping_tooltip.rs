@@ -178,6 +178,55 @@ fn hovering_server_signal_displays_and_dismisses_custom_tooltip() {
 }
 
 #[test]
+fn an_unsupported_member_action_shows_the_server_update_hint_on_hover() {
+    let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    let time_ms = Rc::new(Cell::new(10));
+    platform::set_platform(Box::new(TestDesktop {
+        surface: surface.clone(),
+        time_ms: time_ms.clone(),
+    }))
+    .unwrap();
+    let ui = RoomWindow::new().unwrap();
+    ui.set_joined(true);
+    ui.set_room_name("Legacy network".into());
+    ui.global::<NetworkUi>().set_live(true);
+    ui.set_members(slint::ModelRc::new(slint::VecModel::from(vec![Member {
+        nick: "Mira".into(),
+        ip: "192.0.2.10".into(),
+        ..Default::default()
+    }])));
+    ui.show().unwrap();
+    surface.set_size(PhysicalSize::new(388, 540));
+    let more = LogicalPosition::new(355., 148.);
+    for event in [
+        WindowEvent::PointerPressed { position: more, button: slint::platform::PointerEventButton::Left },
+        WindowEvent::PointerReleased { position: more, button: slint::platform::PointerEventButton::Left },
+    ] {
+        ui.window().dispatch_event(event);
+    }
+    let render = || {
+        let mut pixels = vec![Rgb8Pixel::default(); 388 * 540];
+        surface.request_redraw();
+        surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+        pixels
+    };
+    let hint_pixels = |pixels: &[Rgb8Pixel]| {
+        pixels.iter().filter(|p| (p.r, p.g, p.b) == (48, 51, 56)).count()
+    };
+    let before = hint_pixels(&render());
+    ui.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(250., 180.) });
+    time_ms.set(1500);
+    platform::update_timers_and_animations();
+    let shown = render();
+    assert!(hint_pixels(&shown) > before + 500, "The disabled action still explains how to enable it");
+    if let Some(directory) = std::env::var_os("UPLINK_SETTINGS_QA_OUTPUT") {
+        let bytes: Vec<_> = shown.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let output = std::path::Path::new(&directory).join("server-update-hint.png");
+        image::save_buffer(output, &bytes, 388, 540, image::ColorType::Rgb8).unwrap();
+    }
+}
+
+#[test]
 fn invitation_copy_shows_a_check_for_two_seconds() {
     use slint::platform::PointerEventButton;
     let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
