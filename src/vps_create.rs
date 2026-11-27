@@ -406,7 +406,6 @@ pub struct UpgradeReport {
     pub result: String,
     pub detail: String,
     pub log_file: PathBuf,
-    pub log_text: String,
 }
 
 pub fn server_revision() -> u16 {
@@ -435,11 +434,9 @@ fn run_upgrade(request: Upgrade, path: &Path, remember: bool, progress: impl Fn(
     let log_file = path.with_file_name("server-upgrade.log");
     std::fs::create_dir_all(log_file.parent().ok_or_else(|| invalid("Invalid profile directory"))?)?;
     let attempt = uuid::Uuid::new_v4().to_string();
-    let mut log_text = String::new();
-    let mut record = |fields: Value| {
+    let record = |fields: Value| {
         let line = format!("{}\n", json!({"attempt":attempt,"server":server,"time":chrono::Utc::now().to_rfc3339(),"event":fields}));
         let _ = settings::diagnostics::append(&log_file, &line);
-        log_text.push_str(&line);
     };
     progress(1);
     record(json!({"stage":"ssh","target":server_revision()}));
@@ -499,7 +496,7 @@ fn run_upgrade(request: Upgrade, path: &Path, remember: bool, progress: impl Fn(
         record(json!({"stage":"save_ssh_access","result":"failed","kind":format!("{:?}", error.kind()),"win32":error.raw_os_error()}));
         detail = "Could not save SSH access on this PC.".into();
     }
-    Ok(UpgradeReport { result, detail, log_file, log_text })
+    Ok(UpgradeReport { result, detail, log_file })
 }
 
 #[cfg(test)]

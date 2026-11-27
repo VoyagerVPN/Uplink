@@ -23,7 +23,7 @@ import "../assets/fonts/Inter-SemiBold.ttf";
 export struct SavedRoom { availability: string, name: string, initials: string, url: string, server: string, avatar:image, has-avatar:bool }
 export struct LanguageChoice { code: string, name: string }
 export struct PingReading { bars: int, ms: int }
-export struct Member { nick: string, ip: string, creator: bool, admin: bool, own: bool, ping: PingReading, ssh-state: string }
+export struct Member { nick: string, ip: string, node: string, creator: bool, admin: bool, own: bool, ping: PingReading, ssh-state: string }
 
 component PingIndicator inherits Rectangle {
     in property <PingReading> reading;
@@ -191,14 +191,17 @@ export component RoomWindow inherits Window {
     callback rename-member(string, string);
     callback ssh-member(string, string);
     callback prompt-ssh();
-    out property <bool> can-prompt-ssh: root.power-on && !root.minimized && !root.welcome-open && root.alias-ip == "" && NetworkUi.modal == "" && !UpdateUi.dialog-open && !root.adding-network && !root.creating-network && !NetworkUi.joining;
+    out property <bool> can-prompt-ssh: root.power-on && !root.minimized && !root.welcome-open && root.alias-target == "" && NetworkUi.modal == "" && !UpdateUi.dialog-open && !root.adding-network && !root.creating-network && !NetworkUi.joining;
     private property <bool> ssh-prompt-open: root.can-prompt-ssh && SshUi.active-id != "";
     changed can-prompt-ssh => { if root.can-prompt-ssh { root.prompt-ssh(); } }
-    private property <string> alias-ip;
+    private property <string> alias-target;
     private property <string> alias-name;
     private property <string> alias-network;
-    changed invite-url => { if root.alias-network != root.invite-url { root.alias-ip = ""; } }
-    public function finish-alias() { root.alias-ip = ""; }
+    changed invite-url => {
+        root.close-roster-actions();
+        if root.alias-network != root.invite-url { root.alias-target = ""; }
+    }
+    public function finish-alias() { root.alias-target = ""; }
     in property <bool> password-shareable;
     in-out property <bool> joined;
     in property <[Member]> members;
@@ -225,7 +228,7 @@ export component RoomWindow inherits Window {
     private property <bool> upgrading-with-saved-access;
     function open-server-upgrade(host: string, revision: int) {
         VpsUi.failure = ""; VpsUi.invitation = ""; VpsUi.step = 0;
-        VpsUi.upgrade-result = ""; VpsUi.upgrade-log = "";
+        VpsUi.upgrade-result = "";
         root.upgrading-server = host;
         root.upgrading-revision = revision;
         root.upgrading-with-saved-access = VpsUi.has-upgrade-access(host);
@@ -246,9 +249,20 @@ export component RoomWindow inherits Window {
     in property <string> room-name;
     in property <string> room-server;
     in property <string> room-availability;
+    function network-status(host: string, availability: string) -> string {
+        return VpsUi.updating-host != "" && VpsUi.same-host(host, VpsUi.updating-host)
+            && availability != "deleted" && availability != "denied" ? "updating" : availability;
+    }
+    private property <string> room-status: root.network-status(root.room-server, root.room-availability);
     function availability-text(status: string) -> string {
         return status == "deleted" ? @tr("Network deleted") : status == "denied" ? @tr("Network access lost")
+            : status == "updating" ? (VpsUi.waiting-for-network ? @tr("Checking the server connection…") : @tr("Server is updating…"))
             : status == "unreachable" ? @tr("Server is not responding") : status == "sync_failed" ? @tr("Network sync unavailable") : "";
+    }
+    Timer {
+        interval: 45s;
+        running: VpsUi.waiting-for-network;
+        triggered => { VpsUi.finish-upgrade-status(); }
     }
     in property <bool> power-on: true;
     in property <string> health: "ok";
@@ -272,16 +286,20 @@ export component RoomWindow inherits Window {
     callback change-option(string, bool);
     property <string> status-text: !power-on ? @tr("Uplink is off") : health == "starting" ? @tr("Waiting for the network adapter…") : health == "critical" ? @tr("Network adapter unavailable") : health == "warning" ? @tr("Server connection is unstable") : @tr("Uplink is on");
     property <color> status-color: !power-on || health == "starting" ? #91969f : health == "critical" ? #f07474 : health == "warning" ? #f2a94e : #bfec70;
+    private property <length> top-inset: 8px;
+    private property <length> title-bar-height: 34px;
     FocusScope { focus-on-tab-navigation: false; }
     if root.language-open: TouchArea { clicked => { root.language-open = false; } }
-    FocusScope {enabled:!root.ssh-prompt-open && !root.welcome-open && root.alias-ip=="" && NetworkUi.modal=="" && !UpdateUi.dialog-open && !root.adding-network && !root.creating-network && !NetworkUi.joining;focus-on-tab-navigation:false;
+    FocusScope {enabled:!root.ssh-prompt-open && !root.welcome-open && root.alias-target=="" && NetworkUi.modal=="" && !UpdateUi.dialog-open && !root.adding-network && !root.creating-network && !NetworkUi.joining;focus-on-tab-navigation:false;
+    WindowMoveArea {
+        x: 0px; y: 0px; width: parent.width; height: root.top-inset + root.title-bar-height;
+    }
     VerticalLayout {
-        padding-left: 20px; padding-right: 20px; padding-top: 12px; padding-bottom: 14px; spacing: 8px;
+        padding-left: 16px; padding-right: 16px; padding-top: root.top-inset; padding-bottom: 12px; spacing: 8px;
         HorizontalLayout {
-            height: 34px; spacing: 3px;
-            WindowMoveArea {
+            height: root.title-bar-height; spacing: 3px;
+            Rectangle {
                 width: brand.preferred-width + 4px;
-                FocusScope { focus-on-tab-navigation: false; }
                 brand := HorizontalLayout {
                     spacing: 8px;
                     Image { width: 22px; source: @image-url("../assets/icon/uplink.png"); }
@@ -289,7 +307,7 @@ export component RoomWindow inherits Window {
                 }
             }
             UpdateHeader {}
-            WindowMoveArea { horizontal-stretch: 1; }
+            Rectangle { horizontal-stretch: 1; }
             HorizontalLayout { padding-top: 2px; padding-bottom: 2px; spacing: 3px;
             Action {
                 width: 30px; title-button: true; icon-only: true; glyph-size: 16px;
@@ -448,7 +466,8 @@ export component RoomWindow inherits Window {
                     x: 0px; y: 4px; width: 34px; height: min(rail.height - 35px, root.rooms.length * 40px);
                     for network in root.rooms: ButtonFocus {
                         height: 40px;
-                        accessible-role: button; accessible-label: network.name + (network.availability == "" ? "" : " · " + root.availability-text(network.availability));
+                        property <string> status: root.network-status(network.server, network.availability);
+                        accessible-role: button; accessible-label: network.name + (self.status == "" ? "" : " · " + root.availability-text(self.status));
                         accessible-action-default => { root.select-room(network.url); }
                         key-pressed(event) => {
                             if event.text == Key.Return || event.text == Key.Space { root.select-room(network.url); return accept; }
@@ -459,7 +478,7 @@ export component RoomWindow inherits Window {
                             background: network.server == "coop.example" ? #262d32 : network.server == "arena.example" ? #302b27 : network.server == "pine.example" ? #282e29 : network.server == "night.example" ? #2b2930 : #272b2d;
                             border-width: parent.show-focus ? 2px : 1px;
                             border-color: network.url == root.invite-url ? #bfec70 : parent.show-focus ? #a7abb2 : transparent;
-                            opacity: network.availability == "" ? 1 : 0.65;
+                            opacity: parent.status == "" || parent.status == "updating" ? 1 : 0.65;
                             clip:true;
                             if network.has-avatar: Image{x:1px;y:1px;width:30px;height:30px;source:network.avatar;image-fit:cover;}
                             if !network.has-avatar: Label { text: network.initials; font-size: 11px; font-weight: 600; color: network.server == "coop.example" ? #bccbd6 : network.server == "arena.example" ? #d4c7b7 : network.server == "pine.example" ? #bdcdb9 : network.server == "night.example" ? #cac2d5 : #c4c9ca; horizontal-alignment: center; }
@@ -485,7 +504,7 @@ export component RoomWindow inherits Window {
                     Label { text: root.room-name; font-size: 18px; font-weight: 600; horizontal-stretch: 1; }
                     NetworkActions {
                         network-key: root.invite-url; server: root.room-server;
-                        can-invite: root.room-availability == "";
+                        can-invite: root.room-status == "";
                         can-show-password: root.password-shareable;
                         copy(value) => { return root.copy(value); }
                         leave => { root.leave-room(); }
@@ -493,7 +512,11 @@ export component RoomWindow inherits Window {
                     }
                 }
                 Rectangle { height: 11px; }
-                if root.room-availability != "": Label { text: root.availability-text(root.room-availability); color: #e99087; height: 24px; }
+                if root.room-status != "": Label {
+                    text: root.availability-text(root.room-status);
+                    color: root.room-status == "updating" ? #a7abb2 : #e99087;
+                    height: 24px;
+                }
                 if root.room-availability != "deleted" && root.room-availability != "denied": HorizontalLayout {
                     height: 24px; spacing: 0px;
                     SortHeading { caption: @tr("Members"); horizontal-stretch: 1; selected: !root.by-ping; descending: root.descending; invoked => { root.sort-members(false); } }
@@ -502,7 +525,7 @@ export component RoomWindow inherits Window {
                     Rectangle { width: 23px; }
                 }
                 if root.room-availability != "deleted" && root.room-availability != "denied": Rectangle { height: 1px; background: #2e3034; }
-                if !root.adding-network && root.error != "" && root.alias-ip == "": Label { wrap: word-wrap; vertical-stretch: 0; text: root.error; color: #e99087; }
+                if !root.adding-network && root.error != "" && root.alias-target == "": Label { wrap: word-wrap; vertical-stretch: 0; text: root.error; color: #e99087; }
                 list := ListView {
                     for member in root.members: Rectangle {
                         height: 30px;
@@ -542,45 +565,15 @@ export component RoomWindow inherits Window {
                             }
                             member-actions := Rectangle {
                                 width: 23px;
-                                property <bool> can-rename: member.own || (NetworkUi.manages && !member.creator && (!member.admin || NetworkUi.owner));
-                                property <bool> can-use-ssh: !NetworkUi.live || member.ssh-state != "" || NetworkUi.ssh-request-supported;
-                                property <bool> can-use-nickname: !NetworkUi.live || NetworkUi.network-nickname-supported;
                                 Action {
                                     width: 24px; height: 26px; icon-only: true; borderless-focus: true; glyph-size: 16px;
                                     glyph: @image-url("../assets/icon/more.svg"); caption: @tr("Member actions for {}", member.nick);
-                                    invoked => { actions.show(); }
-                                }
-                                actions := PopupWindow {
-                                    close-policy: close-on-click-outside;
-                                    x: parent.width - self.width; y: parent.absolute-position.y > 400px ? -self.height - 2px : parent.height + 2px;
-                                    width: 220px; height: member-menu.preferred-height;
-                                    Rectangle {
-                                        background: #25272b; border-width: 1px; border-color: #43474b; border-radius: 6px;
-                                        member-menu := VerticalLayout { padding: 4px;
-                                            if !member.own: RosterMenuAction {
-                                                width: parent.width - 8px;
-                                                available: member-actions.can-use-ssh;
-                                                disabled-hint: @tr("This feature will be available after a server update.");
-                                                caption: member.ssh-state == "incoming" ? @tr("Review SSH request") : member.ssh-state == "outgoing" ? @tr("Cancel SSH request") : @tr("Request SSH access");
-                                                glyph: @image-url("../assets/icon/terminal.svg");
-                                                invoked => {
-                                                    root.ssh-member(member.ssh-state == "incoming" ? "review" : member.ssh-state == "outgoing" ? "cancel" : "request", member.ip);
-                                                    actions.close();
-                                                }
-                                            }
-                                            if member-actions.can-rename: RosterMenuAction {
-                                                width: parent.width - 8px;
-                                                available: member-actions.can-use-nickname;
-                                                disabled-hint: @tr("This feature will be available after a server update.");
-                                                caption: @tr("Edit network nickname"); glyph: @image-url("../assets/icon/pencil.svg");
-                                                invoked => { actions.close(); root.error = ""; root.alias-network = root.invite-url; root.alias-name = member.nick; root.alias-ip = member.ip; }
-                                            }
-                                            if member-actions.can-rename && !member.own: RosterMenuAction {
-                                                width: parent.width - 8px;
-                                                caption: @tr("Remove from network"); glyph: @image-url("../assets/icon/leave.svg"); danger: true;
-                                                invoked => { actions.close(); NetworkUi.target = member.ip; NetworkUi.target-name = member.nick; NetworkUi.error = ""; NetworkUi.modal = "remove"; }
-                                            }
-                                        }
+                                    invoked => {
+                                        root.roster-target = member;
+                                        root.roster-anchor = member-actions.absolute-position;
+                                        root.roster-anchor-right = root.roster-anchor.x + member-actions.width;
+                                        root.roster-anchor-bottom = root.roster-anchor.y + member-actions.height;
+                                        roster-actions.show();
                                     }
                                 }
                             }
@@ -615,6 +608,63 @@ export component RoomWindow inherits Window {
         }
     }
     }
+    in-out property <Member> roster-target;
+    private property <Member> empty-roster-target;
+    public function close-roster-actions() {
+        roster-actions.close();
+        root.roster-target = root.empty-roster-target;
+    }
+    private property <Point> roster-anchor;
+    private property <length> roster-anchor-right;
+    private property <length> roster-anchor-bottom;
+    roster-actions := PopupWindow {
+        close-policy: close-on-click-outside;
+        x: root.roster-anchor-right - self.width;
+        y: root.roster-anchor.y > 400px ? root.roster-anchor.y - self.height - 2px : root.roster-anchor-bottom + 2px;
+        width: 220px; height: member-menu.preferred-height;
+        Rectangle {
+            background: #25272b; border-width: 1px; border-color: #43474b; border-radius: 6px;
+            member-menu := VerticalLayout {
+                padding: 4px;
+                property <bool> can-rename: root.roster-target.own || (NetworkUi.manages && !root.roster-target.creator && (!root.roster-target.admin || NetworkUi.owner));
+                if !root.roster-target.own: RosterMenuAction {
+                    width: parent.width - 8px;
+                    available: !NetworkUi.live || root.roster-target.ssh-state != "" || NetworkUi.ssh-request-supported;
+                    disabled-hint: @tr("This feature will be available after a server update.");
+                    caption: root.roster-target.ssh-state == "incoming" ? @tr("Review SSH request") : root.roster-target.ssh-state == "outgoing" ? @tr("Cancel SSH request") : @tr("Request SSH access");
+                    glyph: @image-url("../assets/icon/terminal.svg");
+                    invoked => {
+                        root.ssh-member(root.roster-target.ssh-state == "incoming" ? "review" : root.roster-target.ssh-state == "outgoing" ? "cancel" : "request", root.roster-target.ip);
+                        root.close-roster-actions();
+                    }
+                }
+                if member-menu.can-rename: RosterMenuAction {
+                    width: parent.width - 8px;
+                    available: !NetworkUi.live || NetworkUi.network-nickname-supported;
+                    disabled-hint: @tr("This feature will be available after a server update.");
+                    caption: @tr("Edit network nickname"); glyph: @image-url("../assets/icon/pencil.svg");
+                    invoked => {
+                        root.error = "";
+                        root.alias-network = root.invite-url;
+                        root.alias-name = root.roster-target.nick;
+                        root.alias-target = NetworkUi.live ? root.roster-target.node : root.roster-target.ip;
+                        root.close-roster-actions();
+                    }
+                }
+                if member-menu.can-rename && !root.roster-target.own: RosterMenuAction {
+                    width: parent.width - 8px;
+                    caption: @tr("Remove from network"); glyph: @image-url("../assets/icon/leave.svg"); danger: true;
+                    invoked => {
+                        NetworkUi.target = root.roster-target.ip;
+                        NetworkUi.target-name = root.roster-target.nick;
+                        NetworkUi.error = "";
+                        NetworkUi.modal = "remove";
+                        root.close-roster-actions();
+                    }
+                }
+            }
+        }
+    }
     sent := CopyFeedback {
         property <int> serial: SshUi.receipt;
         changed serial => { self.show(true); }
@@ -632,19 +682,19 @@ export component RoomWindow inherits Window {
             DialogButton { primary: true; caption: @tr("Continue"); available: welcome-name.text != ""; invoked => { root.finish-welcome(welcome-name.text); } }
         }
     }
-    if root.alias-ip != "": DialogFrame {
+    if root.alias-target != "": DialogFrame {
         card-width: 325px; title: @tr("Edit network nickname");
         dismiss => { root.finish-alias(); root.error = ""; }
         alias := TextField {
             field-name: @tr("Nickname"); clearable: false;
             init => { self.start(root.alias-name); }
-            submit(value) => { root.rename-member(root.alias-ip, value); }
+            submit(value) => { root.rename-member(root.alias-target, value); }
             cancel => { root.finish-alias(); root.error = ""; }
         }
         if root.error != "": DialogError { text: root.error; }
         DialogActions {
             DialogButton { caption: @tr("Cancel"); invoked => { root.finish-alias(); root.error = ""; } }
-            DialogButton { primary: true; caption: @tr("Save"); available: alias.text != "" && !root.alias-saving; invoked => { root.rename-member(root.alias-ip, alias.text); } }
+            DialogButton { primary: true; caption: @tr("Save"); available: alias.text != "" && !root.alias-saving; invoked => { root.rename-member(root.alias-target, alias.text); } }
         }
     }
     if root.ssh-prompt-open: SshRequestDialog {}

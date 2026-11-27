@@ -1,6 +1,6 @@
 [package]
 name = "uplink"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 publish = false
 default-run = "uplink"
@@ -49,6 +49,7 @@ winresource = "0.1"
 slint-build = "1"
 
 [dev-dependencies]
+i-slint-core = { version = "1", default-features = false }
 quircs = "0.10"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

@@ -101,7 +101,7 @@ export component UpdateHeader inherits HorizontalLayout {
         accessible-action-default => { self.activate(); }
         key-pressed(e) => { if e.text == Key.Return || e.text == Key.Space { self.activate(); return accept; } return reject; }
         word := Label { text: "v" + UpdateUi.version; font-size: 11px; letter-spacing: 0.45px; color: hit.has-hover || version.show-focus ? #eff0f2 : #90959c; }
-        hit := TouchArea { mouse-cursor: pointer; clicked => {version.focus-from-pointer(); version.activate();} }
+        hit := TouchArea { enabled: version.enabled; mouse-cursor: pointer; clicked => {version.focus-from-pointer(); version.activate();} }
         Tooltip { HintCard { message: version.accessible-label; } }
     }
     Rectangle { width: 24px;

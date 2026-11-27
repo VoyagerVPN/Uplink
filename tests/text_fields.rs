@@ -39,6 +39,70 @@ fn click(ui: &RoomWindow, x: f32, y: f32) {
     platform::update_timers_and_animations();
 }
 
+#[test]
+fn the_entire_title_bar_drags_except_for_active_controls() {
+    use i_slint_core::{InternalToken, window::WindowAdapterInternal};
+    use slint::Window;
+    use slint::platform::{Renderer, software_renderer::SoftwareRenderer};
+    use std::cell::Cell;
+
+    struct TitleBarWindow {
+        window: Window,
+        renderer: SoftwareRenderer,
+        moves: Cell<u32>,
+    }
+    impl WindowAdapter for TitleBarWindow {
+        fn window(&self) -> &Window { &self.window }
+        fn renderer(&self) -> &dyn Renderer { &self.renderer }
+        fn size(&self) -> PhysicalSize { PhysicalSize::new(388, 540) }
+        fn internal(&self, _: InternalToken) -> Option<&dyn WindowAdapterInternal> { Some(self) }
+    }
+    impl WindowAdapterInternal for TitleBarWindow {
+        fn start_window_move(&self) { self.moves.set(self.moves.get() + 1); }
+    }
+    struct TitleBarPlatform(Rc<TitleBarWindow>);
+    impl Platform for TitleBarPlatform {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    let surface = Rc::new_cyclic(|weak| TitleBarWindow {
+        window: Window::new(weak.clone()),
+        renderer: SoftwareRenderer::new_with_repaint_buffer_type(RepaintBufferType::NewBuffer),
+        moves: Cell::new(0),
+    });
+    platform::set_platform(Box::new(TitleBarPlatform(surface.clone()))).unwrap();
+    let ui = RoomWindow::new().unwrap();
+    let updates = ui.global::<UpdateUi>();
+    updates.set_version("0.3.2".into());
+    ui.show().unwrap();
+    ui.window().dispatch_event(WindowEvent::Resized { size: slint::LogicalSize::new(388., 540.) });
+
+    let drag = |x, y| {
+        let position = LogicalPosition::new(x, y);
+        let end = LogicalPosition::new(x, y + 10.);
+        let button = PointerEventButton::Left;
+        ui.window().dispatch_event(WindowEvent::PointerMoved { position });
+        ui.window().dispatch_event(WindowEvent::PointerPressed { position, button });
+        ui.window().dispatch_event(WindowEvent::PointerMoved { position: end });
+        ui.window().dispatch_event(WindowEvent::PointerReleased { position: end, button });
+        surface.moves.replace(0)
+    };
+
+    for (x, y) in [(3., 3.), (48., 25.), (154., 25.), (182., 25.), (235., 25.), (385., 25.)] {
+        assert_eq!(drag(x, y), 1, "Blank title-bar point {x},{y} should start a move");
+    }
+    assert_eq!(drag(48., 62.), 0, "The content should stay outside the drag area");
+    assert_eq!(drag(118., 25.), 0, "The version is a button while idle");
+    updates.set_phase(UpdatePhase::Checking);
+    assert_eq!(drag(118., 25.), 1, "An inactive version should allow dragging");
+    assert_eq!(drag(285., 25.), 0, "A settings-button drag must not move the window");
+    ui.set_settings_open(false);
+    click(&ui, 285., 25.);
+    assert!(ui.get_settings_open(), "The settings button still responds to a click");
+}
+
 fn key(ui: &RoomWindow, text: impl Into<slint::SharedString>) {
     let text = text.into();
     ui.window()
@@ -312,14 +376,15 @@ fn a_network_manager_can_edit_the_title_and_click_away_to_save() {
     let bounds = net.get_drop_bounds();
     assert_eq!(
         (bounds.h, bounds.w, bounds.x, bounds.y),
-        (84., 64., 36., 169.)
+        (84., 64., 32., 165.)
     );
-    click(&ui, 164., 200.);
+    let edit_title = || click(&ui, bounds.x + 128., bounds.y + 31.);
+    edit_title();
     assert!(ui.get_editing_room());
     key(&ui, "2");
     key(&ui, Key::Escape);
     assert_eq!(ui.get_room_name(), "LAN");
-    click(&ui, 164., 200.);
+    edit_title();
     key(&ui, "3");
     click(&ui, 350., 465.);
     assert_eq!(ui.get_room_name(), "LAN3");
@@ -742,6 +807,25 @@ fn run_server_upgrade_from_network_menu(saved_access: bool) {
     }
     key(&ui, Key::Escape);
     assert!(ui.get_creating_network(), "The update remains visible while the VPS works");
+    if saved_access {
+        wizard.set_step(4);
+        let status_area = || {
+            let mut pixels = vec![slint::Rgb8Pixel::default(); 388 * 540];
+            surface.request_redraw();
+            surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+            pixels[98 * 388..123 * 388].to_vec()
+        };
+        let updating = status_area();
+        ui.set_room_availability("sync_failed".into());
+        assert!(updating == status_area(), "A transient proxy error should keep the update status in the network view");
+        slint::select_bundled_translation("ru").unwrap();
+        capture("server-updating.png");
+        wizard.set_waiting_for_network(true);
+        wizard.set_upgrade_result("updated".into());
+        capture("server-updated.png");
+        wizard.invoke_finish_upgrade_status();
+        slint::select_bundled_translation("en").unwrap();
+    }
     wizard.set_upgrade_result("restored".into());
     wizard.set_failure("Fixture failure".into());
     platform::update_timers_and_animations();

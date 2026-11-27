@@ -8,7 +8,14 @@ export global VpsUi {
     in-out property <string> invitation;
     in-out property <string> network-key;
     in-out property <string> upgrade-result;
-    in-out property <string> upgrade-log;
+    in-out property <string> updating-host;
+    in-out property <bool> waiting-for-network;
+    pure callback same-host(string, string) -> bool;
+    same-host(a, b) => { return a == b; }
+    public function finish-upgrade-status() {
+        self.waiting-for-network = false;
+        self.updating-host = "";
+    }
     pure callback check(string, string) -> string;
     callback has-upgrade-access(string) -> bool;
     callback choose-key(string) -> string;
@@ -81,7 +88,9 @@ export component VpsDialog inherits DialogFrame {
     function go(p:string) {root.checking=false; root.page=p; root.field-issue="";}
     function start-upgrade(enter-access:bool) {
         root.manual-upgrade=enter-access;
-        VpsUi.failure=""; VpsUi.upgrade-result=""; VpsUi.upgrade-log=""; VpsUi.step=1;
+        VpsUi.failure=""; VpsUi.upgrade-result=""; VpsUi.step=1;
+        VpsUi.waiting-for-network = false;
+        VpsUi.updating-host = root.upgrade-host;
         root.go("progress");
         if enter-access {
             VpsUi.upgrade-with-access(root.upgrade-host,root.ip,root.port,root.user,root.is-key?"":root.password,root.is-key?root.identity:"");
@@ -203,8 +212,6 @@ export component VpsDialog inherits DialogFrame {
                  VpsUi.upgrade-result=="interrupted"?@tr("Server update status unknown"):@tr("Could not update server");}
         if VpsUi.upgrade-result=="interrupted":Label {text:@tr("Reconnect to check the update or recover the server.");wrap:word-wrap;}
         if VpsUi.failure!="":DialogError {text:VpsUi.failure;}
-        if VpsUi.upgrade-log!="":DialogButton {caption:log-copied.running?"✓":@tr("Copy update log");invoked=>{if root.copy-link(VpsUi.upgrade-log){log-copied.start();}}}
-        log-copied := Timer {interval:2s;running:false;triggered=>{self.stop();}}
         DialogActions {
             if VpsUi.upgrade-result=="updated" || VpsUi.upgrade-result=="current":DialogButton {primary:true;caption:@tr("Done");invoked=>{root.closed();}}
             if VpsUi.upgrade-result!="updated" && VpsUi.upgrade-result!="current":DialogButton {

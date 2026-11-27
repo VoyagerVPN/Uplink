@@ -14,7 +14,7 @@ Open **⋮ → Update server** from a network you own and confirm the update. Up
 
 The app checks the address registered on the VPS before stopping anything. It updates the existing instance, including all networks on it. The connection pauses while the services restart. When the new server fails its health check, Uplink restores the previous program files and data, then checks the restored services.
 
-The VPS continues the update if your SSH connection drops. Open the same action again to reconnect or recover an interrupted update. **Copy update log** shares the timeline from the current attempt. Windows saves it in `%APPDATA%\Uplink\server-upgrade.log`. The VPS keeps a copy in `/var/lib/uplink-upgrade/<attempt>/events.jsonl`. If automatic recovery fails, the recovery snapshot is kept on the VPS.
+The VPS continues the update if your SSH connection drops. Open the same action again to reconnect or recover an interrupted update. Uplink saves the update log in `%APPDATA%\Uplink\server-upgrade.log`. The VPS keeps a copy in `/var/lib/uplink-upgrade/<attempt>/events.jsonl`. If automatic recovery fails, the recovery snapshot is kept on the VPS.
 
 For scripts or agent use, run `uplinkctl vps upgrade` with a JSON request on standard input. The `server` field is the address shown in the network menu. The `access.ip` field is the address you SSH into, which can differ when your host uses a proxy. Supply either `password` or `identity`, a path to the SSH private key. Provide `fingerprint` for the first connection or set `trust_on_first_use` to `true` to use the app’s normal first-connection policy.
 

@@ -118,13 +118,13 @@ impl Room {
     }
 }
 
-pub fn rename_network_member(path: &Path, url: &str, ip: &str, name: &str) -> io::Result<()> {
+pub fn rename_network_member(path: &Path, url: &str, participant: &str, name: &str) -> io::Result<()> {
     let name = validated_name(name, 32)?;
     let _guard = transport_lock(path)?;
     let room = rooms(path)?.into_iter().next().filter(|room| room.url == url)
         .ok_or_else(|| io::Error::other("The selected network has changed"))?;
     if let Some(live) = room.live {
-        let member = live.rows.iter().find(|row| row.ip == ip)
+        let member = live.rows.iter().find(|row| row.node == participant)
             .ok_or_else(|| io::Error::other("Participant is unavailable"))?;
         live.rename_member(&member.node, name)?;
         return update(path, |prefs| {
@@ -138,6 +138,7 @@ pub fn rename_network_member(path: &Path, url: &str, ip: &str, name: &str) -> io
             Ok(())
         });
     }
+    let ip = participant;
     update(path, |prefs| {
         let mut room = room_info(prefs, url);
         let own = room.own_ip == ip;

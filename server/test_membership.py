@@ -144,7 +144,8 @@ class MembershipTest(unittest.TestCase):
 
     def test_network_nickname_survives_sync_and_cannot_rename_an_unrelated_member(self):
         with tempfile.TemporaryDirectory() as tmp:
-            api = Networks(Path(tmp) / "networks.db", Keys())
+            now = 1000
+            api = Networks(Path(tmp) / "networks.db", Keys(), now=lambda: now)
             group, outside = "ab" * 16, "cd" * 16
             alice, bob, other = (digit * 64 for digit in "123")
             api.create_group(group, {"name": "Test"})
@@ -159,6 +160,9 @@ class MembershipTest(unittest.TestCase):
             with self.assertRaises(ApiError):
                 api.rename_member(alice, unrelated["node"], "No")
             api.rename_member(bob, guest["node"], "Local Bob")
+            now += 60
+            offline_guest = next(p for p in api.sync(alice, "Alice")["members"] if p["node"] == guest["node"])
+            self.assertFalse(offline_guest["present"])
             api.rename_member(alice, guest["node"], "Co-op Bob")
             names = {p["node"]: p["nick"] for p in api.sync(bob, "Global Bob")["members"]}
             self.assertEqual(names[guest["node"]], "Co-op Bob")

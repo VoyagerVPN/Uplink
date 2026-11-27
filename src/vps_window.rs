@@ -1,7 +1,23 @@
 use crate::{NoticesUi, RoomWindow, ServerUpdateNotice, VpsUi, apply_room_change, avatar};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::{collections::BTreeMap, path::Path};
-use uplink::{i18n, settings, vps};
+use uplink::{i18n, settings, transport::Availability, vps};
+
+pub fn observe_upgrade_sync(ui: &RoomWindow, rooms: &[settings::Room]) {
+    let api = ui.global::<VpsUi>();
+    if !api.get_waiting_for_network() {
+        return;
+    }
+    let host = api.get_updating_host();
+    let revision = vps::server_revision();
+    if rooms.iter().filter_map(|room| room.live.as_ref()).any(|live| {
+        live.host.eq_ignore_ascii_case(host.as_str())
+            && live.availability == Availability::Available
+            && live.server_revision.is_some_and(|version| version >= revision)
+    }) {
+        api.invoke_finish_upgrade_status();
+    }
+}
 
 pub fn refresh_notices(ui: &RoomWindow, rooms: &[settings::Room]) {
     let mut servers = BTreeMap::<String, (&settings::Room, u16)>::new();
@@ -33,6 +49,7 @@ pub fn refresh_notices(ui: &RoomWindow, rooms: &[settings::Room]) {
 
 pub fn bind(ui: &RoomWindow, path: &Path) {
     let api = ui.global::<VpsUi>();
+    api.on_same_host(|a, b| a.eq_ignore_ascii_case(b.as_str()));
     let weak = ui.as_weak();
     api.on_check(move |field, value| {
         let Some(ui) = weak.upgrade() else {
@@ -62,16 +79,25 @@ pub fn bind(ui: &RoomWindow, path: &Path) {
                 Some(access) => vps::upgrade(vps::Upgrade { server, access }, &path, on_step),
                 None => vps::upgrade_saved(server, &path, on_step),
             };
+            let rooms = settings::rooms(&path);
             let _ = complete.upgrade_in_event_loop(move |ui| {
                 let api = ui.global::<VpsUi>();
                 match result {
                     Ok(report) => {
-                        api.set_upgrade_log(report.log_text.into());
+                        if matches!(report.result.as_str(), "updated" | "current") {
+                            api.set_waiting_for_network(true);
+                            if let Ok(rooms) = rooms {
+                                observe_upgrade_sync(&ui, &rooms);
+                            }
+                        } else {
+                            api.invoke_finish_upgrade_status();
+                        }
                         let lang = ui.get_language_code();
                         api.set_failure(if report.detail.is_empty() { "".into() } else { i18n::error_message(&lang, &report.detail).into() });
                         api.set_upgrade_result(report.result.into());
                     }
                     Err(error) => {
+                        api.invoke_finish_upgrade_status();
                         api.set_failure(i18n::error_message(&ui.get_language_code(), &error.to_string()).into());
                         api.set_upgrade_result("failed".into());
                     }

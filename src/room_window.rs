@@ -11,7 +11,7 @@ mod update_preview;
 mod update_notes;
 mod update_window;
 use network_window::bind_network;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{io, path::Path, rc::Rc};
 use uplink::{changed, invite, peers, settings};
 
@@ -73,39 +73,53 @@ fn members(
     });
     let rows = participants
         .into_iter()
-        .map(|p| Member {
-            nick: p.nick.into(),
-            ip: p.ip.into(),
-            creator: p.ip == creator,
-            admin: policy.admins.iter().any(|ip| ip == p.ip),
-            own: p.own,
-            ping: ping_reading(p.ping_ms),
-            ssh_state: live.and_then(|live| {
-                let peer = live.rows.iter().find(|row| row.ip == p.ip && row.node != live.node)?;
+        .map(|p| {
+            let peer = live.and_then(|live| live.rows.iter().find(|row| row.ip == p.ip));
+            let ssh_state = live.zip(peer).filter(|(live, peer)| peer.node != live.node).and_then(|(live, peer)| {
                 let mut requests = live.ssh_requests.iter().filter(|r| r.state == "pending");
                 if requests.clone().any(|r| r.requester == peer.node && r.recipient == live.node) {
                     Some("incoming")
                 } else if requests.any(|r| r.requester == live.node && r.recipient == peer.node) {
                     Some("outgoing")
                 } else { None }
-            }).unwrap_or_default().into(),
+            });
+            Member {
+                nick: p.nick.into(),
+                ip: p.ip.into(),
+                node: peer.map_or("", |row| row.node.as_str()).into(),
+                creator: p.ip == creator,
+                admin: policy.admins.iter().any(|ip| ip == p.ip),
+                own: p.own,
+                ping: ping_reading(p.ping_ms),
+                ssh_state: ssh_state.unwrap_or_default().into(),
+            }
         })
         .collect::<Vec<_>>();
     ModelRc::new(VecModel::from(rows))
 }
 
 fn refresh_members(ui: &RoomWindow, room: &settings::Room) {
-    ui.set_members(members(
+    let rows = members(
         room.participants(&ui.get_nickname()),
         &ui.get_creator_ip(),
         &room.policy,
         ui.get_by_ping(),
         ui.get_descending(),
         room.live.as_ref(),
-    ));
+    );
+    let target = ui.get_roster_target();
+    if !target.ip.is_empty() {
+        if let Some(current) = rows.iter().find(|row| row.ip == target.ip && row.node == target.node) {
+            ui.set_roster_target(current);
+        } else {
+            ui.invoke_close_roster_actions();
+        }
+    }
+    ui.set_members(rows);
 }
 
 fn apply_rooms(ui: &RoomWindow, rooms: Vec<settings::Room>) {
+    vps_window::observe_upgrade_sync(ui, &rooms);
     vps_window::refresh_notices(ui, &rooms);
     ssh_window::refresh(ui, &rooms);
     let net = ui.global::<NetworkUi>();
@@ -535,19 +549,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let weak = window.as_weak();
     let profile = path.clone();
-    window.on_rename_member(move |ip, name| {
+    window.on_rename_member(move |participant, name| {
         let Some(ui) = weak.upgrade() else { return };
         if ui.get_alias_saving() {
             return;
         }
         let selected = ui.get_invite_url().to_string();
-        let (ip, name) = (ip.to_string(), name.to_string());
+        let (participant, name) = (participant.to_string(), name.to_string());
         ui.set_error("".into());
         ui.set_alias_saving(true);
         let profile = profile.as_ref().clone();
         let weak = ui.as_weak();
         std::thread::spawn(move || {
-            let result = settings::rename_network_member(&profile, &selected, &ip, &name)
+            let result = settings::rename_network_member(&profile, &selected, &participant, &name)
                 .and_then(|()| settings::rooms(&profile));
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 ui.set_alias_saving(false);
@@ -680,20 +694,50 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::platform::{
+        Platform, WindowAdapter,
+        software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
+    };
+
+    struct Screen;
+    impl Platform for Screen {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+            Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
+        }
+    }
+
+    #[test]
+    fn update_status_waits_for_the_new_revision_on_the_right_server() {
+        slint::platform::set_platform(Box::new(Screen)).unwrap();
+        let ui = RoomWindow::new().unwrap();
+        let vps_ui = ui.global::<VpsUi>();
+        vps_ui.set_updating_host("QA.example".into());
+        vps_ui.set_waiting_for_network(true);
+        let prefs = tempfile::tempdir().unwrap();
+        let file = prefs.path().join("prefs.json");
+        let sync = |host, availability, revision| {
+            let url = format!("uplink://{host}/networks/ab");
+            let live = serde_json::json!({
+                "host":host,"id":"ab","node":"alice","name":"Network","session":"fixture",
+                "availability":availability,"server_revision":revision,
+            });
+            std::fs::write(&file, serde_json::json!({"rooms":[url],"live":{url:live}}).to_string()).unwrap();
+            apply_rooms(&ui, settings::rooms(&file).unwrap());
+        };
+        let revision = uplink::vps::server_revision();
+        sync("other.example", "available", revision);
+        assert!(vps_ui.get_waiting_for_network());
+        sync("qa.example", "sync_failed", revision);
+        assert!(vps_ui.get_waiting_for_network());
+        sync("qa.example", "available", revision - 1);
+        assert!(vps_ui.get_waiting_for_network());
+        sync("qa.example", "available", revision);
+        assert!(!vps_ui.get_waiting_for_network());
+        assert!(vps_ui.get_updating_host().is_empty());
+    }
 
     #[test]
     fn a_member_sees_a_new_rail_avatar_while_editing_their_nickname() {
-        use slint::Model;
-        use slint::platform::{
-            Platform, WindowAdapter,
-            software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
-        };
-        struct Screen;
-        impl Platform for Screen {
-            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
-                Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
-            }
-        }
         slint::platform::set_platform(Box::new(Screen)).unwrap();
         let ui = RoomWindow::new().unwrap();
         let prefs = tempfile::tempdir().unwrap();
@@ -731,7 +775,6 @@ mod tests {
 
     #[test]
     fn table_sorts_names_and_numeric_latency_in_both_directions() {
-        use slint::Model;
         let names = |by_ping, descending| {
             members(
                 peers::room_members(invite::INVITATION, "Аня"),

@@ -961,6 +961,12 @@ msgstr "Сервер не отвечает"
 msgid "Network sync unavailable"
 msgstr "Не удалось обновить данные сети"
 
+msgid "Server is updating…"
+msgstr "Сервер обновляется…"
+
+msgid "Checking the server connection…"
+msgstr "Проверяем связь с сервером…"
+
 msgid "Update the Uplink server to join this network."
 msgstr "Для подключения обновите Uplink на сервере."
 
@@ -1211,9 +1217,6 @@ msgstr "Не удалось обновить сервер"
 
 msgid "Reconnect to check the update or recover the server."
 msgstr "Подключитесь повторно, чтобы проверить обновление или восстановить сервер."
-
-msgid "Copy update log"
-msgstr "Скопировать журнал обновления"
 
 msgctxt "native"
 msgid "This VPS does not serve the selected network address"

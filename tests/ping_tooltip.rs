@@ -141,19 +141,19 @@ fn hovering_server_signal_displays_and_dismisses_custom_tooltip() {
     };
     let before = render();
     // У второй строки нет замера. Все три полоски серые, место для числа свободно.
-    for x in [173, 178, 183] {
+    for x in [177, 182, 187] {
         assert!(
-            (159..187).any(|y| {
+            (155..183).any(|y| {
                 let p = before[y * 388 + x];
                 (p.r, p.g, p.b) == (82, 86, 92)
             }),
             "Нет серой полоски при x={x}"
         );
     }
-    assert!((159..187).all(|y| (191..234).all(|x| before[y * 388 + x].r < 80)));
+    assert!((155..183).all(|y| (195..238).all(|x| before[y * 388 + x].r < 80)));
 
     ui.window().dispatch_event(WindowEvent::PointerMoved {
-        position: LogicalPosition::new(180., 145.),
+        position: LogicalPosition::new(184., 141.),
     });
     time_ms.set(1500);
     platform::update_timers_and_animations();
@@ -175,6 +175,66 @@ fn hovering_server_signal_displays_and_dismisses_custom_tooltip() {
     time_ms.set(3000);
     platform::update_timers_and_animations();
     assert_eq!(card_pixels(&render()), card_pixels(&before));
+}
+
+#[test]
+fn an_owner_can_rename_an_offline_member_while_the_roster_refreshes() {
+    use slint::platform::PointerEventButton;
+    let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    platform::set_platform(Box::new(TestDesktop {
+        surface: surface.clone(),
+        time_ms: Rc::new(Cell::new(10)),
+    })).unwrap();
+    let ui = RoomWindow::new().unwrap();
+    ui.set_joined(true);
+    ui.set_invite_url("fixture".into());
+    ui.set_room_name("После работы".into());
+    ui.global::<UpdateUi>().set_version("0.3.2".into());
+    let net = ui.global::<NetworkUi>();
+    net.set_live(true);
+    net.set_owner(true);
+    net.set_manages(true);
+    net.set_network_nickname_supported(true);
+    net.set_ssh_request_supported(true);
+    let refresh = || ui.set_members(slint::ModelRc::new(slint::VecModel::from(vec![Member {
+        nick: "Mira".into(), ip: "192.0.2.10".into(), node: "fe123abc45".into(), ..Default::default()
+    }])));
+    refresh();
+    let renamed = Rc::new(Cell::new(false));
+    let received = renamed.clone();
+    ui.on_rename_member(move |participant, name| {
+        assert_eq!(participant, "fe123abc45");
+        assert_eq!(name, "Mira LAN");
+        received.set(true);
+    });
+    ui.show().unwrap();
+    surface.set_size(PhysicalSize::new(388, 540));
+    let click = |x, y| {
+        let position = LogicalPosition::new(x, y);
+        let button = PointerEventButton::Left;
+        ui.window().dispatch_event(WindowEvent::PointerMoved { position });
+        ui.window().dispatch_event(WindowEvent::PointerPressed { position, button });
+        ui.window().dispatch_event(WindowEvent::PointerReleased { position, button });
+    };
+    let capture = |name: &str| {
+        if let Some(directory) = std::env::var_os("UPLINK_SETTINGS_QA_OUTPUT") {
+            let mut pixels = vec![Rgb8Pixel::default(); 388 * 540];
+            surface.request_redraw();
+            surface.draw_if_needed(|renderer| { renderer.render(&mut pixels, 388); });
+            let bytes: Vec<_> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+            image::save_buffer(std::path::Path::new(&directory).join(name), &bytes, 388, 540, image::ColorType::Rgb8).unwrap();
+        }
+    };
+    click(355., 148.);
+    capture("offline-menu.png");
+    refresh();
+    capture("offline-menu-refreshed.png");
+    click(245., 209.);
+    capture("offline-nickname.png");
+    assert!(!ui.get_can_prompt_ssh(), "The nickname dialog should be open");
+    ui.window().dispatch_event(WindowEvent::KeyPressed { text: " LAN".into() });
+    ui.window().dispatch_event(WindowEvent::KeyPressed { text: slint::platform::Key::Return.into() });
+    assert!(renamed.get(), "The editor should submit the selected member and nickname");
 }
 
 #[test]
@@ -346,7 +406,7 @@ fn verify_address_copy(server: bool) {
         assert!(!receipt(&render()));
         return;
     }
-    let at = LogicalPosition::new(258., 145.);
+    let at = LogicalPosition::new(262., 141.);
     let hover = |pos| {
         ui.window()
             .dispatch_event(WindowEvent::PointerMoved { position: pos })
@@ -357,7 +417,7 @@ fn verify_address_copy(server: bool) {
         platform::update_timers_and_animations();
     };
     let icon_pixels = |pixels: &[Rgb8Pixel], green| {
-        let (xs, ys) = (288..309, 135..157);
+        let (xs, ys) = (292..313, 131..153);
         ys.flat_map(|y| xs.clone().map(move |x| y * 388 + x))
             .filter(|&i| {
                 let p = pixels[i];
@@ -576,9 +636,9 @@ fn room_buttons_show_background_only_while_hovered() {
         pixels
     };
     let header = |pixels: &[Rgb8Pixel]| {
-        (14..44)
+        (10..40)
             .flat_map(|y| {
-                pixels[y * 388 + 266..y * 388 + 296]
+                pixels[y * 388 + 270..y * 388 + 300]
                     .iter()
                     .map(|p| (p.r, p.g, p.b))
             })
@@ -586,9 +646,9 @@ fn room_buttons_show_background_only_while_hovered() {
     };
     let before = render();
     for (x, y, background) in [
-        (204, 25, (21, 22, 24)),
-        (237, 25, (21, 22, 24)),
-        (336, 25, (21, 22, 24)),
+        (208, 21, (21, 22, 24)),
+        (241, 21, (21, 22, 24)),
+        (340, 21, (21, 22, 24)),
     ] {
         let p = before[y * 388 + x];
         assert_eq!((p.r, p.g, p.b), background, "Фон кнопки в {x},{y}");
@@ -598,17 +658,17 @@ fn room_buttons_show_background_only_while_hovered() {
         let p = render()[y * 388 + x];
         assert_eq!((p.r, p.g, p.b), (56, 59, 64), "Наведение в {x},{y}");
     }
-    let position = LogicalPosition::new(281., 28.);
+    let position = LogicalPosition::new(285., 24.);
     ui.window()
         .dispatch_event(WindowEvent::PointerMoved { position });
-    let p = render()[20 * 388 + 269];
+    let p = render()[16 * 388 + 273];
     assert_eq!((p.r, p.g, p.b), (56, 59, 64));
     let button = PointerEventButton::Left;
     ui.window()
         .dispatch_event(WindowEvent::PointerPressed { position, button });
     ui.window()
         .dispatch_event(WindowEvent::PointerReleased { position, button });
-    let p = render()[20 * 388 + 269];
+    let p = render()[16 * 388 + 273];
     assert_eq!((p.r, p.g, p.b), (56, 59, 64));
     ui.window().dispatch_event(WindowEvent::PointerMoved {
         position: LogicalPosition::new(8., 430.),
@@ -630,7 +690,7 @@ fn room_buttons_show_background_only_while_hovered() {
     });
     let keyboard = render();
     assert!(
-        (13..47).any(|y| (298..332).any(|x| {
+        (9..43).any(|y| (302..336).any(|x| {
             let p = keyboard[y * 388 + x];
             (p.r, p.g, p.b) == (140, 146, 154)
         })),

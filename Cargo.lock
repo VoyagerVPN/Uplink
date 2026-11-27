@@ -5089,13 +5089,14 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
 name = "uplink"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "base64",
  "chrono",
  "clipboard-win",
  "curl",
  "flate2",
+ "i-slint-core",
  "image",
  "libloading",
  "p256",
